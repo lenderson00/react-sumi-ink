@@ -40,15 +40,16 @@ const FEATURES = [
 
 function Seal() {
   return (
-    <svg className="seal-svg" viewBox="0 0 64 64" width="44" height="44" aria-hidden>
-      <rect x="1.5" y="1.5" width="61" height="61" fill="#f4f0e8" stroke="#c23b2e" strokeWidth="3" />
-      <rect x="6" y="6" width="52" height="52" fill="none" stroke="#c23b2e" strokeWidth="1" />
-      <path
-        d="M16 18h32M16 32h24M20 46h28M32 14v36M22 24c6 4 14 4 20 0M24 40c5-3 12-3 18 1"
-        fill="none"
-        stroke="#c23b2e"
-        strokeWidth="1.7"
-      />
+    <svg className="seal-svg" viewBox="0 0 64 64" width="42" height="42" aria-hidden>
+      <rect width="64" height="64" fill="#c23a2c" />
+      <rect x="3" y="3" width="58" height="58" fill="none" stroke="#f4efe6" strokeWidth="1.2" />
+      <rect x="6" y="6" width="52" height="52" fill="none" stroke="#f4efe6" strokeWidth="0.6" />
+      <g fill="none" stroke="#f4efe6" strokeWidth="1.15" strokeLinejoin="round">
+        <path d="M14 16h10M16 16v14M14 23h8M26 15c4 0 6 3 6 7s-2 7-6 7h-2V15z" />
+        <path d="M38 16h8v4c0 4-2 6-6 6h-2M40 26v8M46 28c3 2 4 5 2 8" />
+        <path d="M15 38h8v10H15zM18 38v10M27 38c5 0 7 3 7 6s-3 5-7 5h-3V38z" />
+        <path d="M40 37h9M42 37v12M40 43h7M49 38c3 1 4 4 3 7s-3 4-6 4" />
+      </g>
     </svg>
   );
 }

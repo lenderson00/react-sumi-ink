@@ -193,75 +193,70 @@ impl InkSim {
         let load = load.clamp(0.0, 1.0);
         let speed = speed.clamp(0.0, 1.0);
         let wash_bias = wash_bias.clamp(0.0, 1.0);
-        let width = (radius.max(1.2) * (0.55 + pressure * 0.55)).clamp(1.2, 78.0);
-        let spacing = (width * 0.28).clamp(1.4, 10.0);
-        let steps = ((len / spacing).ceil() as i32).clamp(1, 40);
-        let bristles = if speed > 0.62 { 6 } else { 8 };
-        let mark_amt = if wash_bias > 0.72 {
-            0.0
-        } else {
-            load * (1.0 - wash_bias * 0.9)
-        };
-        let wash_amt = load * (0.25 + wash_bias * 0.85) * (0.45 + pressure * 0.4);
+        let width = (radius.max(1.0) * (0.35 + pressure * 0.45)).clamp(1.0, 18.0);
+        let spacing = 2.4_f32;
+        let steps = ((len / spacing).ceil() as i32).clamp(1, 80);
+        let bristles = 5;
+        let mark_amt = load * (1.0 - wash_bias * 0.82);
+        let wash_amt = load * (0.15 + wash_bias * 0.7);
 
         for s in 0..=steps {
             let t = s as f32 / steps as f32;
-            let fade = 1.0 - t * 0.42 * (0.35 + speed);
+            let fade = 1.0 - t * 0.22 * speed;
             let cx = ax + dx * t;
             let cy = ay + dy * t;
-            let skip_base = (speed * 0.78 + (1.0 - load) * 0.4).clamp(0.0, 0.93);
+            let skip_base = (speed * 0.55 + (1.0 - load) * 0.45).clamp(0.0, 0.9);
             for b in 0..bristles {
                 let bf = b as f32 - (bristles as f32 - 1.0) * 0.5;
                 let h = hash4(cx, cy + bf, b, s);
-                let edge = (bf.abs() / (bristles as f32 * 0.5)).clamp(0.0, 1.0);
-                if h < skip_base * (0.25 + edge * 0.9) && b != bristles / 2 {
+                if h < skip_base * (0.35 + bf.abs() * 0.15) {
                     continue;
                 }
-                let jitter = (h - 0.5) * width * 0.04;
-                let spread = if speed > 0.6 { 0.2 } else { 0.12 };
-                let off = bf * width * spread + jitter;
-                let br = (width * (0.055 + (1.0 - edge) * 0.03)).max(0.9);
-                let dep = mark_amt * fade * (1.0 - edge * 0.25);
-                if dep > 0.02 {
-                    self.stamp(cx + px * off, cy + py * off, br, dep, true);
+                let off = bf * width * 0.22 + (h - 0.5) * 1.4;
+                let dep = mark_amt * fade;
+                if dep > 0.04 {
+                    let rad = if wash_bias < 0.2 { 3.8 } else { 1.15 };
+                    self.stamp(cx + px * off, cy + py * off, rad, dep, true);
+                }
+                if wash_amt > 0.05 && b % 2 == 0 {
+                    self.stamp(
+                        cx + px * off * 1.8,
+                        cy + py * off * 1.8,
+                        1.05,
+                        wash_amt * fade * 0.55,
+                        false,
+                    );
                 }
             }
-            if mark_amt > 0.12 {
-                self.stamp(cx, cy, width * 0.46, mark_amt * fade, true);
-            }
-            if wash_amt > 0.02 {
-                let wr = width * (0.85 + wash_bias * 0.45);
-                self.stamp(cx, cy, wr, wash_amt * fade, false);
-            }
-            if speed > 0.42 {
-                let droplets = 1 + if speed > 0.72 { 2 } else { 0 };
-                for d in 0..droplets {
-                    let h = hash4(cx, cy, d + 3, s + 9);
-                    if h < 0.35 {
-                        continue;
-                    }
-                    let dist = width * (0.85 + h * (1.4 + speed * 3.2));
-                    let side = (hash4(cy, cx, d, 2) - 0.5) * width * 1.3;
-                    let sr = 0.7 + h * 2.4;
+            if speed > 0.55 {
+                let h = hash4(cx, cy, 3, s);
+                if h > 0.62 {
+                    let dist = 4.0 + h * (8.0 + speed * 18.0);
+                    let side = (hash4(cy, cx, s, 2) - 0.5) * 10.0;
                     self.stamp(
                         cx + dirx * dist + px * side,
                         cy + diry * dist + py * side,
-                        sr,
-                        mark_amt * fade * 0.85,
+                        0.8 + h * 1.1,
+                        mark_amt * fade * 0.7,
                         true,
                     );
                 }
             }
-            let impulse = (28.0 + speed * 90.0 + self.vorticity * 4.0) * pressure;
-            self.add_vel(cx, cy, dirx * impulse, diry * impulse, width * 0.45);
+            let impulse = (28.0 + speed * 80.0) * (0.4 + pressure);
+            self.add_vel(cx, cy, dirx * impulse, diry * impulse, 5.5);
+            let spin = if (s + (cx as i32)) % 2 == 0 { 1.0 } else { -1.0 };
+            self.add_vel(cx, cy, -diry * impulse * 0.55 * spin, dirx * impulse * 0.55 * spin, 7.0);
         }
     }
 
+    #[allow(clippy::manual_is_multiple_of)]
     #[wasm_bindgen]
     pub fn step(&mut self, dt: f32) {
         let dt = dt.clamp(1.0 / 240.0, 1.0 / 20.0);
         self.frame = self.frame.wrapping_add(1);
         self.damp_velocity();
+        self.stir_curl();
+        self.confine_vorticity();
         self.slide_obstacles();
         self.advect_velocity(dt);
         self.flow_tmp.copy_from_slice(&self.flow);
@@ -279,7 +274,7 @@ impl InkSim {
             dt,
             0.82,
         );
-        if self.frame % 3 == 0 {
+        if self.frame % 2 == 0 {
             self.wash_tmp.copy_from_slice(&self.wash);
             advect_scalar(
                 self.pw,
@@ -298,7 +293,7 @@ impl InkSim {
             let wash_rate = (self.diffusion * 420.0).clamp(0.02, 0.35);
             self.aniso_diffuse_wash(wash_rate);
         }
-        if self.frame % 8 == 0 {
+        if self.frame % 6 == 0 {
             self.sprout_tendrils();
         }
         self.dry_and_freeze(dt);
@@ -421,8 +416,8 @@ impl InkSim {
                 let soak = 1.0 - self.absorb[id] * 0.35;
                 if core {
                     let add = amount * k * soak;
-                    self.mark[id] = (self.mark[id] + add).min(1.0);
-                    self.flow[id] = (self.flow[id] + add * 0.92).min(1.0);
+                    self.flow[id] = (self.flow[id] + add).min(1.0);
+                    self.mark[id] = (self.mark[id] + add * 0.22).min(0.55);
                     self.wet[id] = (self.wet[id] + add).min(1.0);
                 } else {
                     let add = amount * k * soak;
@@ -456,6 +451,55 @@ impl InkSim {
                 let id = self.vidx(i as usize + 1, j as usize + 1);
                 self.u[id] += vx * k;
                 self.v[id] += vy * k;
+            }
+        }
+    }
+
+    fn stir_curl(&mut self) {
+        let t = self.frame as f32 * 0.02;
+        let amp = 16.0 + self.vorticity.clamp(0.0, 6.0) * 3.5;
+        for j in 0..self.vh {
+            for i in 0..self.vw {
+                let nx = i as f32 / self.vw as f32;
+                let ny = j as f32 / self.vh as f32;
+                let band = smoothstep(0.18, 0.34, ny);
+                let top = 1.0 - smoothstep(0.16, 0.28, ny) * (1.0 - smoothstep(0.34, 0.46, ny)) * smoothstep(0.22, 0.38, nx) * (1.0 - smoothstep(0.62, 0.78, nx));
+                let e = 0.018;
+                let dpy = river_potential(nx, ny + e, t) - river_potential(nx, ny - e, t);
+                let dpx = river_potential(nx + e, ny, t) - river_potential(nx - e, ny, t);
+                let id = self.vidx(i + 1, j + 1);
+                self.u[id] += (dpy / (2.0 * e)) * amp * band * top;
+                self.v[id] += (-dpx / (2.0 * e)) * amp * band * top;
+            }
+        }
+    }
+
+    fn confine_vorticity(&mut self) {
+        let eps = 0.35 * self.vorticity.clamp(0.4, 8.0);
+        let stride = self.vw + 2;
+        let mut curl = vec![0.0_f32; stride * (self.vh + 2)];
+        for j in 1..=self.vh {
+            for i in 1..=self.vw {
+                let du_dy = self.u[i + (j + 1) * stride] - self.u[i + (j - 1) * stride];
+                let dv_dx = self.v[(i + 1) + j * stride] - self.v[(i - 1) + j * stride];
+                curl[i + j * stride] = 0.5 * (dv_dx - du_dy);
+            }
+        }
+        for j in 1..=self.vh {
+            for i in 1..=self.vw {
+                let id = i + j * stride;
+                let w = curl[id];
+                let dx = curl[(i + 1) + j * stride].abs() - curl[(i - 1) + j * stride].abs();
+                let dy = curl[i + (j + 1) * stride].abs() - curl[i + (j - 1) * stride].abs();
+                let mag = (dx * dx + dy * dy).sqrt();
+                if mag < 1.0e-3 {
+                    continue;
+                }
+                let nx = dx / mag;
+                let ny = dy / mag;
+                let push = eps * w.clamp(-12.0, 12.0);
+                self.u[id] += ny * push;
+                self.v[id] -= nx * push;
             }
         }
     }
@@ -777,6 +821,19 @@ fn advect_scalar(
             dst[id] = src[id] * (1.0 - w) + sample * w;
         }
     }
+}
+
+fn smoothstep(e0: f32, e1: f32, x: f32) -> f32 {
+    let t = ((x - e0) / (e1 - e0)).clamp(0.0, 1.0);
+    t * t * (3.0 - 2.0 * t)
+}
+
+fn river_potential(x: f32, y: f32, t: f32) -> f32 {
+    let mut p = (x * 5.5 + t).sin() * (y * 4.2 - t * 0.6).cos();
+    p += 0.55 * (x * 12.0 - y * 3.5 + t * 1.1).sin();
+    p += 0.32 * (x * 22.0 + y * 16.0).sin() * (y * 14.0 - t).cos();
+    p += 0.16 * (x * 41.0 - t * 1.7).sin() * (y * 33.0).cos();
+    p
 }
 
 fn hash4(a: f32, b: f32, c: i32, d: i32) -> f32 {

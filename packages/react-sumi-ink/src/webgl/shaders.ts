@@ -69,26 +69,30 @@ void main(){
   float gran = hash(vUv * vec2(740.0, 610.0));
   float fine = hash(vUv * vec2(1680.0, 1320.0));
   float edgeN = fbm(vUv * vec2(70.0, 42.0) + vec2(n1, n2) * 0.8);
-  float thresh = mix(0.46, 0.74, edgeN);
-  thresh += (gran - 0.5) * 0.18;
+  float thresh = mix(0.38, 0.66, edgeN) + (gran - 0.5) * 0.12;
 
-  float solid = smoothstep(0.58, 0.66, core);
-  float body = smoothstep(thresh, thresh + 0.03, coreE);
-  float edgeBand = smoothstep(0.18, 0.4, coreE) * (1.0 - smoothstep(0.7, 0.9, core));
-  body *= mix(1.0, mix(0.25, 1.0, fine), edgeBand * uGrain);
-  float coreA = max(solid, body * 0.92);
+  float solid = smoothstep(0.42, 0.62, core);
+  float torn = fbm(vUv * vec2(95.0, 48.0) + vec2(n1, n2));
+  float fall = smoothstep(thresh - 0.12, thresh, coreE) * (1.0 - solid);
+  vec2 flowDir = normalize(vec2(0.9, -0.18 + 0.5 * sin(vUv.x * 8.0 + n1)));
+  vec2 across = vec2(-flowDir.y, flowDir.x);
+  float halo = 0.0;
+  halo += texture(uInk, vUv + across * texel * 8.0).r;
+  halo += texture(uInk, vUv - across * texel * 8.0).r;
+  halo += texture(uInk, vUv + across * texel * 18.0).r;
+  halo += texture(uInk, vUv - across * texel * 18.0).r;
+  halo += texture(uInk, vUv + flowDir * texel * 10.0).r;
+  halo = halo * 0.2;
+  float streak = smoothstep(0.42, 0.78, noise(vec2(dot(vUv, flowDir) * 6.0, dot(vUv, across) * 36.0)));
+  float speckle = step(0.9, hash(vUv * vec2(900.0, 700.0))) * smoothstep(0.02, 0.12, max(core, halo));
+  float washA = smoothstep(0.02, 0.14, max(max(halo, fall), wash)) * (0.35 + 0.65 * streak) * (0.55 + 0.45 * torn);
+  washA += speckle * 0.45;
+  washA *= 1.0 - solid * 0.9;
+  float coreA = solid;
 
-  float washN = fbm(vUv * vec2(22.0, 14.0) + 2.0);
-  float washA = smoothstep(0.16, 0.4, wash);
-  washA *= mix(0.22, 0.62, washN);
-  washA *= 1.0 - coreA;
-
-  vec2 fib = normalize(vec2(0.96, 0.18 + 0.22 * sin(vUv.y * 18.0 + n1)));
-  vec2 perp = vec2(-fib.y, fib.x);
-  float phase = dot(vUv, perp) / max(texel.x, 0.001) * 0.55 + fbm(vUv * 10.0) * 6.0;
-  float threads = pow(abs(sin(phase)), 14.0);
-  float boundary = smoothstep(0.06, 0.2, core) * (1.0 - smoothstep(0.34, 0.62, core));
-  float tendril = boundary * threads * smoothstep(0.45, 0.75, noise(vUv * vec2(220.0, 40.0)));
+  float threads = smoothstep(0.68, 0.92, noise(vec2(dot(vUv, flowDir) * 14.0, dot(vUv, across) * 55.0)));
+  float boundary = smoothstep(0.08, 0.22, core) * (1.0 - smoothstep(0.45, 0.75, core));
+  float tendril = boundary * threads;
 
   float l = texture(uInk, vUv - vec2(texel.x, 0.0)).r;
   float rgt = texture(uInk, vUv + vec2(texel.x, 0.0)).r;
@@ -105,16 +109,17 @@ void main(){
   float block = max(m0, max(max(m1, m2), max(m3, m4)));
   float keep = 1.0 - smoothstep(0.12, 0.48, block);
 
-  float grain = fbm(vUv * vec2(220.0, 160.0));
-  float fiber = fbm(vUv * vec2(640.0, 90.0) + vec2(grain * 2.0, 1.7));
-  float tooth = hash(vUv * vec2(1100.0, 860.0));
-  vec3 paper = mix(uPaperA, uPaperB, 0.4 + (grain - 0.5) * 0.12);
-  paper *= 0.94 + 0.07 * fiber + 0.05 * (tooth - 0.5);
+  float grain = fbm(vUv * vec2(140.0, 90.0));
+  float along = vUv.x * 520.0 + sin(vUv.y * 18.0) * 6.0 + fbm(vUv * 24.0) * 8.0;
+  float fiber = abs(sin(along)) * 0.65 + abs(sin(vUv.y * 260.0 + vUv.x * 30.0)) * 0.35;
+  float tooth = hash(vUv * vec2(980.0, 760.0));
+  vec3 paper = mix(uPaperA, uPaperB, 0.25 + grain * 0.2);
+  paper *= 0.93 + 0.08 * fiber + 0.035 * (tooth - 0.5);
 
   vec3 sumi = vec3(0.012, 0.011, 0.01);
-  vec3 washCol = vec3(0.16, 0.155, 0.145);
+  vec3 washCol = vec3(0.34, 0.33, 0.31);
   vec3 col = paper;
-  col = mix(col, washCol, clamp(washA, 0.0, 0.78) * keep);
+  col = mix(col, washCol, clamp(washA, 0.0, 0.62) * keep);
   float inkMask = clamp(coreA + tendril * 0.9, 0.0, 1.0) * keep;
   col = mix(col, sumi, inkMask);
   col = mix(col, sumi * 0.42, rim * inkMask);

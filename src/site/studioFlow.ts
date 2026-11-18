@@ -1,139 +1,113 @@
 import type { InkPoint, InkSplashOptions, InkStageHandle } from 'react-sumi-ink';
 
-type Stroke = { pts: InkPoint[]; opts: InkSplashOptions };
+type Seg = { a: InkPoint; b: InkPoint; opts: InkSplashOptions };
 
-const pt = (pairs: number[][]): InkPoint[] => pairs.map(([x, y]) => ({ x, y }));
-
-const mirror = (pairs: number[][]): number[][] => pairs.map(([x, y]) => [1 - x, y + 0.012]);
-
-const studioStrokes = (): Stroke[] => {
-  const leftCore = [
-    [0.0, 0.4],
-    [0.07, 0.33],
-    [0.15, 0.31],
-    [0.2, 0.4],
-    [0.24, 0.52],
-    [0.22, 0.66],
-    [0.18, 0.79],
-    [0.08, 0.84],
-    [0.0, 0.74],
-  ];
-  const leftInner = [
-    [0.02, 0.48],
-    [0.11, 0.44],
-    [0.16, 0.5],
-    [0.2, 0.62],
-    [0.18, 0.74],
-    [0.12, 0.8],
-  ];
-  const leftWash = [
-    [-0.02, 0.36],
-    [0.1, 0.28],
-    [0.2, 0.34],
-    [0.32, 0.5],
-    [0.3, 0.7],
-    [0.18, 0.88],
-    [0.04, 0.9],
-  ];
-  const leftDry = [
-    [0.0, 0.26],
-    [0.09, 0.23],
-    [0.17, 0.27],
-    [0.23, 0.34],
-  ];
-  const leftLow = [
-    [0.16, 0.8],
-    [0.28, 0.9],
-    [0.4, 0.93],
-  ];
-  const rightCore = mirror([
-    [0.0, 0.46],
-    [0.08, 0.36],
-    [0.16, 0.34],
-    [0.24, 0.44],
-    [0.3, 0.58],
-    [0.26, 0.72],
-    [0.16, 0.82],
-    [0.05, 0.78],
-  ]);
-  const rightInner = mirror([
-    [0.02, 0.52],
-    [0.12, 0.48],
-    [0.2, 0.56],
-    [0.24, 0.68],
-    [0.16, 0.78],
-  ]);
-  const rightWash = mirror([
-    [0.0, 0.4],
-    [0.12, 0.3],
-    [0.22, 0.4],
-    [0.32, 0.58],
-    [0.28, 0.76],
-    [0.14, 0.9],
-  ]);
-  const rightDry = mirror([
-    [0.0, 0.28],
-    [0.1, 0.24],
-    [0.18, 0.3],
-    [0.26, 0.4],
-  ]);
-  const rightLow = mirror([
-    [0.14, 0.82],
-    [0.26, 0.91],
-    [0.38, 0.94],
-  ]);
-
-  const leftEdge = [
-    [0.0, 0.33],
-    [0.1, 0.3],
-    [0.18, 0.36],
-    [0.22, 0.46],
-  ];
-  const rightEdge = mirror([
-    [0.0, 0.34],
-    [0.1, 0.31],
-    [0.18, 0.38],
-    [0.22, 0.48],
-  ]);
-  return [
-    { pts: pt(leftWash), opts: { radius: 110, pressure: 0.75, load: 0.8, speed: 0.16, wash: 0.96 } },
-    { pts: pt(rightWash), opts: { radius: 104, pressure: 0.72, load: 0.78, speed: 0.18, wash: 0.96 } },
-    { pts: pt(leftCore), opts: { radius: 64, pressure: 0.96, load: 1, speed: 0.1, wash: 0.04 } },
-    { pts: pt(rightCore), opts: { radius: 60, pressure: 0.94, load: 1, speed: 0.12, wash: 0.04 } },
-    { pts: pt(leftInner), opts: { radius: 36, pressure: 0.88, load: 0.95, speed: 0.2, wash: 0.05 } },
-    { pts: pt(rightInner), opts: { radius: 34, pressure: 0.86, load: 0.92, speed: 0.22, wash: 0.05 } },
-    { pts: pt(leftEdge), opts: { radius: 22, pressure: 0.4, load: 0.55, speed: 0.88, wash: 0.02 } },
-    { pts: pt(rightEdge), opts: { radius: 20, pressure: 0.38, load: 0.5, speed: 0.9, wash: 0.02 } },
-    { pts: pt(leftDry), opts: { radius: 16, pressure: 0.3, load: 0.4, speed: 0.95, wash: 0.0 } },
-    { pts: pt(rightDry), opts: { radius: 15, pressure: 0.28, load: 0.38, speed: 0.96, wash: 0.0 } },
-    { pts: pt(leftLow), opts: { radius: 48, pressure: 0.6, load: 0.66, speed: 0.34, wash: 0.7 } },
-    { pts: pt(rightLow), opts: { radius: 46, pressure: 0.58, load: 0.64, speed: 0.36, wash: 0.7 } },
-  ];
+const river = (t: number): [number, number] => {
+  const x = -0.03 + t * 1.06;
+  const dive = Math.sin(t * Math.PI);
+  const y = 0.4 + dive * 0.3 + Math.sin(t * Math.PI * 2.2) * 0.055 + Math.sin(t * 13.0) * 0.02;
+  return [x, Math.min(0.9, Math.max(0.26, y))];
 };
 
-const segmentsOf = (strokes: Stroke[]) => {
-  const segs: { a: InkPoint; b: InkPoint; opts: InkSplashOptions }[] = [];
-  for (const stroke of strokes) {
-    for (let i = 1; i < stroke.pts.length; i++) {
-      const t = i / (stroke.pts.length - 1);
-      const load = (stroke.opts.load ?? 1) * (1 - t * 0.28);
-      segs.push({ a: stroke.pts[i - 1], b: stroke.pts[i], opts: { ...stroke.opts, load } });
+const tangent = (t: number): [number, number] => {
+  const a = river(Math.max(0, t - 0.01));
+  const b = river(Math.min(1, t + 0.01));
+  const dx = b[0] - a[0];
+  const dy = b[1] - a[1];
+  const len = Math.hypot(dx, dy) || 1;
+  return [-dy / len, dx / len];
+};
+
+const filaments = (): Seg[] => {
+  const segs: Seg[] = [];
+  const lines = 24;
+  for (let k = 0; k < lines; k++) {
+    const u = k / (lines - 1);
+    const side = (u - 0.5) * 2;
+    const core = Math.abs(side) < 0.5;
+    const pts: InkPoint[] = [];
+    const steps = 32;
+    for (let s = 0; s <= steps; s++) {
+      const t = s / steps;
+      const [x, y] = river(t);
+      const [nx, ny] = tangent(t);
+      const edge = 1 - Math.sin(t * Math.PI);
+      const widen = core ? 0.018 + edge * 0.09 : 0.04 + edge * 0.18;
+      const swirl = Math.sin(t * Math.PI * 2.6 + k * 0.55) * (0.01 + edge * 0.035);
+      const off = side * widen + swirl;
+      pts.push({ x: x + nx * off, y: y + ny * off });
+    }
+    const radius = core ? 16 : 6;
+    const wash = core ? 0.0 : 0.72;
+    const speed = core ? 0.28 : 0.86;
+    for (let i = 1; i < pts.length; i++) {
+      segs.push({
+        a: pts[i - 1],
+        b: pts[i],
+        opts: {
+          radius,
+          pressure: core ? 0.85 : 0.4,
+          load: core ? 0.95 : 0.55,
+          speed,
+          wash,
+        },
+      });
+    }
+  }
+  for (let k = 0; k < 22; k++) {
+    const u = k / 21;
+    const side = (u - 0.5) * 2;
+    const pts: InkPoint[] = [];
+    for (let s = 0; s <= 26; s++) {
+      const t = s / 26;
+      const [x, y] = river(t);
+      const [nx, ny] = tangent(t);
+      const edge = 1 - Math.sin(t * Math.PI);
+      const off = side * (0.05 + edge * 0.2) + Math.sin(t * 19.0 + k) * 0.02;
+      pts.push({ x: x + nx * off, y: y + ny * off + Math.sin(t * 9.0 + k * 0.4) * edge * 0.03 });
+    }
+    for (let i = 1; i < pts.length; i++) {
+      segs.push({
+        a: pts[i - 1],
+        b: pts[i],
+        opts: { radius: 8, pressure: 0.3, load: 0.42, speed: 0.9, wash: 0.8 },
+      });
+    }
+  }
+  for (let k = 0; k < 10; k++) {
+    const t0 = 0.08 + (k / 10) * 0.84;
+    const [x, y] = river(t0);
+    const [nx, ny] = tangent(t0);
+    const spin = k % 2 === 0 ? 1 : -1;
+    const pts: InkPoint[] = [];
+    for (let s = 0; s < 6; s++) {
+      const a = s / 5;
+      pts.push({
+        x: x + nx * (a - 0.5) * 0.05 + ny * Math.sin(a * Math.PI) * 0.03 * spin,
+        y: y + ny * (a - 0.5) * 0.05 - nx * Math.sin(a * Math.PI) * 0.03 * spin,
+      });
+    }
+    for (let i = 1; i < pts.length; i++) {
+      segs.push({
+        a: pts[i - 1],
+        b: pts[i],
+        opts: { radius: 4, pressure: 0.35, load: 0.4, speed: 0.95, wash: 0.15 },
+      });
     }
   }
   return segs;
 };
 
 export const playStudioFlow = (stage: InkStageHandle, animate = false) => {
-  const strokes = studioStrokes();
+  const segs = filaments();
   const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
   if (!animate || reduced) {
-    for (const stroke of strokes) stage.stroke(stroke.pts, stroke.opts);
+    for (const seg of segs) stage.stroke([seg.a, seg.b], seg.opts);
     if (reduced) stage.dry();
     return () => {};
   }
-  const segs = segmentsOf(strokes);
   const t0 = performance.now();
-  const dur = 2600;
+  const dur = 3200;
   let n = 0;
   let raf = 0;
   const frame = (now: number) => {
