@@ -728,14 +728,107 @@ button {
   font-weight: 500;
 }
 
-.ink-scene {
+.ink-stage-layer {
   position: absolute;
   inset: 0;
-  display: grid;
-  place-content: center;
-  padding: 24px;
-  gap: 16px;
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+  pointer-events: none;
+}
+
+.ink-stage-paper {
+  position: relative;
+  z-index: 2;
+  min-height: 100%;
+  pointer-events: none;
+}
+.ink-stage-paper a,
+.ink-stage-paper button,
+.ink-stage-paper input,
+.ink-stage-paper select,
+.ink-stage-paper [data-ink-interactive] {
+  pointer-events: auto;
+}
+
+.ink-demo-scene {
+  position: absolute;
+  inset: 0;
+  padding: 72px 24px 96px;
+  max-width: calc(100% - 300px);
+}
+
+.scene-stage {
+  position: relative;
+  height: 100%;
   transform: scale(var(--scene-scale, 1));
+  transform-origin: left center;
+}
+
+.scene-head {
+  margin-bottom: 28px;
+  max-width: 380px;
+}
+
+.scene-title {
+  font-family: 'Noto Serif JP', 'Instrument Serif', Georgia, serif;
+  font-size: clamp(52px, 9vw, 96px);
+  line-height: 0.95;
+  margin: 0.1em 0 0.2em;
+  font-weight: 600;
+}
+
+.scene-lede {
+  margin: 0;
+  color: var(--ink-2);
+  font-size: 14px;
+  max-width: 320px;
+}
+
+.scene-cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(108px, 140px));
+  gap: 12px;
+  max-width: 460px;
+}
+
+.scene-card {
+  background: color-mix(in srgb, var(--paper) 88%, transparent);
+  border: 1px solid var(--chip-border);
+  border-radius: 14px;
+  padding: 12px;
+  box-shadow: var(--sticker-shadow);
+  backdrop-filter: blur(4px);
+  font-size: 12px;
+}
+
+.scene-kicker {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.scene-ink-btn {
+  margin-top: 18px;
+  border-radius: 999px;
+  padding: 10px 22px;
+  border: 1px solid var(--chip-border);
+  background: var(--ink);
+  color: var(--paper);
+  cursor: pointer;
+  font-weight: 500;
+}
+
+@media (max-width: 720px) {
+  .ink-demo-scene {
+    max-width: 100%;
+    padding: 64px 16px 120px;
+  }
+  .scene-cards {
+    grid-template-columns: 1fr 1fr;
+  }
 }
 
 .scene-heading {

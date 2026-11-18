@@ -3,3 +3,6 @@ export const stageScaleForViewport = (width: number): number => {
   if (width < 720) return 0.9;
   return 1;
 };
+
+export const isMobileViewport = () =>
+  typeof window !== 'undefined' && window.matchMedia('(max-width: 720px)').matches;

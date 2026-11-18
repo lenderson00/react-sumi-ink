@@ -22,6 +22,31 @@ const borderRadiusPx = (el: Element, stage: DOMRect): number => {
   return Math.min(br, Math.min(stage.width, stage.height) * 0.5);
 };
 
+const paintGlyphs = (ctx: CanvasRenderingContext2D, root: HTMLElement, stage: DOMRect) => {
+  const nodes = root.querySelectorAll<HTMLElement>('[data-ink-glyphs], [data-ink="glyphs"]');
+  nodes.forEach((el) => {
+    const r = el.getBoundingClientRect();
+    const cs = getComputedStyle(el);
+    const font = cs.font || `${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+    const text = (el.textContent || '').trim();
+    if (!text) return;
+    const role = parseInkRole(el.hasAttribute('data-ink') ? el : el.parentElement || el);
+    ctx.font = font;
+    ctx.textAlign = 'left';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = role === 'obstacle' ? '#fff' : role === 'absorb' ? '#0f0' : role === 'repel' ? '#00f' : '#000';
+    const x = r.left - stage.left;
+    const y = r.top - stage.top;
+    const lines = text.split('\n');
+    let dy = 0;
+    const lh = (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2) || 20;
+    for (const line of lines) {
+      ctx.fillText(line, x, y + dy);
+      dy += lh;
+    }
+  });
+};
+
 export const collectInkRects = (root: HTMLElement): InkObstacleRect[] => {
   const stage = root.getBoundingClientRect();
   const nodes = root.querySelectorAll<HTMLElement>('[data-ink]');
@@ -44,6 +69,7 @@ export const collectInkRects = (root: HTMLElement): InkObstacleRect[] => {
 };
 
 export const rasterizeObstacleMask = (
+  root: HTMLElement,
   gw: number,
   gh: number,
   stageW: number,
@@ -54,6 +80,16 @@ export const rasterizeObstacleMask = (
   const mask = new Float32Array(n * 3);
   const sx = gw / Math.max(1, stageW);
   const sy = gh / Math.max(1, stageH);
+
+  const glyph = document.createElement('canvas');
+  glyph.width = gw;
+  glyph.height = gh;
+  const gctx = glyph.getContext('2d');
+  if (gctx) {
+    gctx.scale(sx, sy);
+    paintGlyphs(gctx, root, root.getBoundingClientRect());
+  }
+  const glyphData = gctx?.getImageData(0, 0, gw, gh).data;
   const insideRoundRect = (x: number, y: number, rect: InkObstacleRect): boolean => {
     const rx = rect.left;
     const ry = rect.top;
@@ -95,6 +131,18 @@ export const rasterizeObstacleMask = (
           break;
         }
       }
+      if (glyphData) {
+        const gi = (j * gw + i) * 4;
+        const a = glyphData[gi + 3];
+        if (a > 8) {
+          const r = glyphData[gi];
+          const g = glyphData[gi + 1];
+          const b = glyphData[gi + 2];
+          if (r > g && r > b) ch = roleChannel('obstacle');
+          else if (g > r && g > b) ch = roleChannel('absorb');
+          else if (b > r && b > g) ch = roleChannel('repel');
+        }
+      }
       const idx = j * gw + i;
       mask[idx] = ch[0];
       mask[n + idx] = ch[1];
@@ -117,7 +165,12 @@ export const observeInkDom = (
     root.querySelectorAll<HTMLElement>('[data-ink]').forEach((el) => ro.observe(el));
     onChange();
   });
-  mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-ink', 'class', 'style'] });
+  mo.observe(root, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ['data-ink', 'data-ink-glyphs', 'class', 'style'],
+  });
   return () => {
     ro.disconnect();
     mo.disconnect();
