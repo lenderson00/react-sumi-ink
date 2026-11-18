@@ -2,67 +2,70 @@
 
 use wasm_bindgen::prelude::*;
 
-const BND: usize = 1;
-
+/// Dual-resolution sumi sim.
+/// Velocity lives on a coarse grid. Pigment (crisp mark, flowing ink, wash, wetness)
+/// lives on a 2x to 4x grid and is advected with MacCormack so edges stay sharp.
 #[wasm_bindgen]
 pub struct InkSim {
-    w: usize,
-    h: usize,
+    vw: usize,
+    vh: usize,
+    pw: usize,
+    ph: usize,
+    scale: usize,
     u: Vec<f32>,
-    u_prev: Vec<f32>,
     v: Vec<f32>,
-    v_prev: Vec<f32>,
-    d: Vec<f32>,
-    d_prev: Vec<f32>,
-    dr: Vec<f32>,
-    dg: Vec<f32>,
-    db: Vec<f32>,
-    dry: Vec<f32>,
-    obstacle: Vec<f32>,
+    mark: Vec<f32>,
+    flow: Vec<f32>,
+    flow_tmp: Vec<f32>,
+    wash: Vec<f32>,
+    wash_tmp: Vec<f32>,
+    wet: Vec<f32>,
+    settled: Vec<f32>,
+    obs: Vec<f32>,
     absorb: Vec<f32>,
-    repel: Vec<f32>,
-    fiber_u: Vec<f32>,
-    fiber_v: Vec<f32>,
+    fu: Vec<f32>,
+    fv: Vec<f32>,
     viscosity: f32,
     diffusion: f32,
     drying: f32,
     vorticity: f32,
-    dt: f32,
-    iter: u32,
-    frame: u64,
+    frame: u32,
 }
 
 #[wasm_bindgen]
 impl InkSim {
     #[wasm_bindgen(constructor)]
-    pub fn new(width: u32, height: u32) -> InkSim {
-        let w = width.max(32) as usize;
-        let h = height.max(32) as usize;
-        let n = (w + 2) * (h + 2);
+    pub fn new(vw: u32, vh: u32, scale: u32) -> InkSim {
+        let vw = vw.max(24) as usize;
+        let vh = vh.max(24) as usize;
+        let scale = scale.clamp(2, 4) as usize;
+        let pw = vw * scale;
+        let ph = vh * scale;
+        let vn = (vw + 2) * (vh + 2);
+        let pn = pw * ph;
         let mut sim = InkSim {
-            w,
-            h,
-            u: vec![0.0; n],
-            u_prev: vec![0.0; n],
-            v: vec![0.0; n],
-            v_prev: vec![0.0; n],
-            d: vec![0.0; n],
-            d_prev: vec![0.0; n],
-            dr: vec![0.0; n],
-            dg: vec![0.0; n],
-            db: vec![0.0; n],
-            dry: vec![0.0; n],
-            obstacle: vec![0.0; n],
-            absorb: vec![0.0; n],
-            repel: vec![0.0; n],
-            fiber_u: vec![0.0; n],
-            fiber_v: vec![0.0; n],
+            vw,
+            vh,
+            pw,
+            ph,
+            scale,
+            u: vec![0.0; vn],
+            v: vec![0.0; vn],
+            mark: vec![0.0; pn],
+            flow: vec![0.0; pn],
+            flow_tmp: vec![0.0; pn],
+            wash: vec![0.0; pn],
+            wash_tmp: vec![0.0; pn],
+            wet: vec![0.0; pn],
+            settled: vec![0.0; pn],
+            obs: vec![0.0; pn],
+            absorb: vec![0.0; pn],
+            fu: vec![0.0; pn],
+            fv: vec![0.0; pn],
             viscosity: 0.00015,
             diffusion: 0.0003,
             drying: 0.12,
             vorticity: 3.0,
-            dt: 1.0 / 60.0,
-            iter: 20,
             frame: 0,
         };
         sim.build_fibers();
@@ -71,12 +74,12 @@ impl InkSim {
 
     #[wasm_bindgen]
     pub fn width(&self) -> u32 {
-        self.w as u32
+        self.pw as u32
     }
 
     #[wasm_bindgen]
     pub fn height(&self) -> u32 {
-        self.h as u32
+        self.ph as u32
     }
 
     #[wasm_bindgen]
@@ -84,44 +87,49 @@ impl InkSim {
         self.viscosity = viscosity.clamp(0.0, 0.01);
         self.diffusion = diffusion.clamp(0.0, 0.01);
         self.drying = drying.clamp(0.0, 1.0);
-        self.vorticity = vorticity.clamp(0.0, 10.0);
+        self.vorticity = vorticity.clamp(0.0, 12.0);
     }
 
     #[wasm_bindgen]
     pub fn clear(&mut self) {
         self.u.fill(0.0);
         self.v.fill(0.0);
-        self.d.fill(0.0);
-        self.dr.fill(0.0);
-        self.dg.fill(0.0);
-        self.db.fill(0.0);
-        self.dry.fill(0.0);
+        self.mark.fill(0.0);
+        self.flow.fill(0.0);
+        self.wash.fill(0.0);
+        self.wet.fill(0.0);
+        self.settled.fill(0.0);
     }
 
     #[wasm_bindgen]
     pub fn dry_all(&mut self) {
-        for v in self.dry.iter_mut() {
-            *v = 1.0;
+        for i in 0..self.mark.len() {
+            self.settled[i] = (self.settled[i] + self.mark[i]).min(1.0);
+            self.wet[i] = 0.0;
         }
+        self.u.fill(0.0);
+        self.v.fill(0.0);
     }
 
+    /// Packed mask, length `width * height * 3`: obstacle, absorb, repel.
     #[wasm_bindgen]
     pub fn set_obstacle_mask(&mut self, data: &[f32]) {
-        let inner = self.w * self.h;
-        if data.len() != inner * 3 {
+        let n = self.pw * self.ph;
+        if data.len() < n * 3 {
             return;
         }
-        for j in 0..self.h {
-            for i in 0..self.w {
-                let gi = self.idx(i + 1, j + 1);
-                let si = j * self.w + i;
-                self.obstacle[gi] = data[si];
-                self.absorb[gi] = data[inner + si];
-                self.repel[gi] = data[inner * 2 + si];
+        for i in 0..n {
+            self.obs[i] = if data[i] > 0.35 { 1.0 } else { 0.0 };
+            self.absorb[i] = data[n + i].clamp(0.0, 1.0);
+            if self.obs[i] > 0.5 {
+                self.mark[i] = 0.0;
+                self.flow[i] = 0.0;
+                self.wash[i] = 0.0;
             }
         }
     }
 
+    /// Legacy round deposit. Radius is in pigment pixels. Prefer `stroke_segment`.
     #[wasm_bindgen]
     pub fn splat(
         &mut self,
@@ -129,373 +137,655 @@ impl InkSim {
         y: f32,
         radius: f32,
         amount: f32,
-        r: f32,
-        g: f32,
-        b: f32,
+        _r: f32,
+        _g: f32,
+        _b: f32,
         vx: f32,
         vy: f32,
     ) {
-        let cx = (x * self.w as f32).clamp(1.0, self.w as f32);
-        let cy = (y * self.h as f32).clamp(1.0, self.h as f32);
-        let rad = radius.max(1.0);
-        let r2 = rad * rad;
-        let vel_scale = amount * 120.0;
-        let min_i = ((cx - rad).floor() as i32).max(1);
-        let max_i = ((cx + rad).ceil() as i32).min(self.w as i32);
-        let min_j = ((cy - rad).floor() as i32).max(1);
-        let max_j = ((cy + rad).ceil() as i32).min(self.h as i32);
-        for j in min_j..=max_j {
-            for i in min_i..=max_i {
-                let dx = i as f32 - cx;
-                let dy = j as f32 - cy;
-                let d2 = dx * dx + dy * dy;
-                if d2 > r2 {
+        let sp = (vx * vx + vy * vy).sqrt();
+        let (dx, dy) = if sp > 0.01 {
+            (vx / sp, vy / sp)
+        } else {
+            (1.0, 0.0)
+        };
+        let nudge = 0.012;
+        self.stroke_segment(
+            x - dx * nudge,
+            y - dy * nudge,
+            x + dx * nudge,
+            y + dy * nudge,
+            radius.max(2.0),
+            amount.clamp(0.2, 1.0),
+            0.9,
+            (sp * 0.15).clamp(0.05, 0.7),
+            0.15,
+        );
+    }
+
+    /// One polyline segment. Coordinates are normalized 0..1.
+    /// `radius` is pigment pixels. `speed` and `wash_bias` are 0..1.
+    #[wasm_bindgen]
+    pub fn stroke_segment(
+        &mut self,
+        x0: f32,
+        y0: f32,
+        x1: f32,
+        y1: f32,
+        radius: f32,
+        pressure: f32,
+        load: f32,
+        speed: f32,
+        wash_bias: f32,
+    ) {
+        let ax = x0.clamp(0.0, 1.0) * self.pw as f32;
+        let ay = y0.clamp(0.0, 1.0) * self.ph as f32;
+        let bx = x1.clamp(0.0, 1.0) * self.pw as f32;
+        let by = y1.clamp(0.0, 1.0) * self.ph as f32;
+        let dx = bx - ax;
+        let dy = by - ay;
+        let len = (dx * dx + dy * dy).sqrt().max(0.001);
+        let dirx = dx / len;
+        let diry = dy / len;
+        let px = -diry;
+        let py = dirx;
+        let pressure = pressure.clamp(0.05, 1.0);
+        let load = load.clamp(0.0, 1.0);
+        let speed = speed.clamp(0.0, 1.0);
+        let wash_bias = wash_bias.clamp(0.0, 1.0);
+        let width = (radius.max(1.2) * (0.55 + pressure * 0.55)).clamp(1.2, 78.0);
+        let spacing = (width * 0.28).clamp(1.4, 10.0);
+        let steps = ((len / spacing).ceil() as i32).clamp(1, 40);
+        let bristles = if speed > 0.62 { 6 } else { 8 };
+        let mark_amt = if wash_bias > 0.72 {
+            0.0
+        } else {
+            load * (1.0 - wash_bias * 0.9)
+        };
+        let wash_amt = load * (0.25 + wash_bias * 0.85) * (0.45 + pressure * 0.4);
+
+        for s in 0..=steps {
+            let t = s as f32 / steps as f32;
+            let fade = 1.0 - t * 0.42 * (0.35 + speed);
+            let cx = ax + dx * t;
+            let cy = ay + dy * t;
+            let skip_base = (speed * 0.78 + (1.0 - load) * 0.4).clamp(0.0, 0.93);
+            for b in 0..bristles {
+                let bf = b as f32 - (bristles as f32 - 1.0) * 0.5;
+                let h = hash4(cx, cy + bf, b, s);
+                let edge = (bf.abs() / (bristles as f32 * 0.5)).clamp(0.0, 1.0);
+                if h < skip_base * (0.25 + edge * 0.9) && b != bristles / 2 {
                     continue;
                 }
-                let k = (1.0 - (d2 / r2).sqrt()).powf(2.0);
-                let idx = self.idx(i as usize, j as usize);
-                if self.obstacle[idx] > 0.5 {
-                    continue;
-                }
-                let damp = 1.0 - self.repel[idx] * 0.85;
-                self.d[idx] += amount * k * damp;
-                let add = amount * k * damp;
-                self.dr[idx] = (self.dr[idx] + r * add * 4.0).min(12.0);
-                self.dg[idx] = (self.dg[idx] + g * add * 4.0).min(12.0);
-                self.db[idx] = (self.db[idx] + b * add * 4.0).min(12.0);
-                self.u[idx] += vx * vel_scale * k;
-                self.v[idx] += vy * vel_scale * k;
-                if self.absorb[idx] > 0.3 {
-                    let soak = self.absorb[idx] * k * 0.15;
-                    self.d[idx] *= 1.0 - soak;
+                let jitter = (h - 0.5) * width * 0.04;
+                let spread = if speed > 0.6 { 0.2 } else { 0.12 };
+                let off = bf * width * spread + jitter;
+                let br = (width * (0.055 + (1.0 - edge) * 0.03)).max(0.9);
+                let dep = mark_amt * fade * (1.0 - edge * 0.25);
+                if dep > 0.02 {
+                    self.stamp(cx + px * off, cy + py * off, br, dep, true);
                 }
             }
+            if mark_amt > 0.12 {
+                self.stamp(cx, cy, width * 0.46, mark_amt * fade, true);
+            }
+            if wash_amt > 0.02 {
+                let wr = width * (0.85 + wash_bias * 0.45);
+                self.stamp(cx, cy, wr, wash_amt * fade, false);
+            }
+            if speed > 0.42 {
+                let droplets = 1 + if speed > 0.72 { 2 } else { 0 };
+                for d in 0..droplets {
+                    let h = hash4(cx, cy, d + 3, s + 9);
+                    if h < 0.35 {
+                        continue;
+                    }
+                    let dist = width * (0.85 + h * (1.4 + speed * 3.2));
+                    let side = (hash4(cy, cx, d, 2) - 0.5) * width * 1.3;
+                    let sr = 0.7 + h * 2.4;
+                    self.stamp(
+                        cx + dirx * dist + px * side,
+                        cy + diry * dist + py * side,
+                        sr,
+                        mark_amt * fade * 0.85,
+                        true,
+                    );
+                }
+            }
+            let impulse = (28.0 + speed * 90.0 + self.vorticity * 4.0) * pressure;
+            self.add_vel(cx, cy, dirx * impulse, diry * impulse, width * 0.45);
         }
     }
 
     #[wasm_bindgen]
     pub fn step(&mut self, dt: f32) {
-        self.dt = dt.clamp(1.0 / 240.0, 1.0 / 15.0);
-        self.frame += 1;
-        self.project_obstacles();
-        self.add_vorticity();
-        self.diffuse(self.viscosity, BND);
-        self.project();
-        self.advect_velocity();
-        self.diffuse_scalar(self.diffusion);
-        self.advect_density();
-        self.apply_drying();
-        self.clamp_density();
-    }
-
-    #[wasm_bindgen]
-    pub fn density_ptr(&self) -> *const f32 {
-        self.d.as_ptr()
-    }
-
-    #[wasm_bindgen]
-    pub fn pigment_ptr(&self) -> *const f32 {
-        self.dr.as_ptr()
-    }
-
-    #[wasm_bindgen]
-    pub fn dry_ptr(&self) -> *const f32 {
-        self.dry.as_ptr()
-    }
-
-    #[wasm_bindgen]
-    pub fn density_len(&self) -> usize {
-        self.d.len()
+        let dt = dt.clamp(1.0 / 240.0, 1.0 / 20.0);
+        self.frame = self.frame.wrapping_add(1);
+        self.damp_velocity();
+        self.slide_obstacles();
+        self.advect_velocity(dt);
+        self.flow_tmp.copy_from_slice(&self.flow);
+        advect_scalar(
+            self.pw,
+            self.ph,
+            self.vw,
+            self.vh,
+            &self.flow_tmp,
+            &mut self.flow,
+            &self.u,
+            &self.v,
+            &self.wet,
+            &self.obs,
+            dt,
+            0.82,
+        );
+        if self.frame % 3 == 0 {
+            self.wash_tmp.copy_from_slice(&self.wash);
+            advect_scalar(
+                self.pw,
+                self.ph,
+                self.vw,
+                self.vh,
+                &self.wash_tmp,
+                &mut self.wash,
+                &self.u,
+                &self.v,
+                &self.wet,
+                &self.obs,
+                dt * 2.0,
+                1.0,
+            );
+            let wash_rate = (self.diffusion * 420.0).clamp(0.02, 0.35);
+            self.aniso_diffuse_wash(wash_rate);
+        }
+        if self.frame % 8 == 0 {
+            self.sprout_tendrils();
+        }
+        self.dry_and_freeze(dt);
+        self.knockout_obstacles();
     }
 
     #[wasm_bindgen]
     pub fn copy_density_rgba(&self, out: &mut [f32]) {
-        let n = self.w * self.h;
+        let n = self.pw * self.ph;
         if out.len() < n * 4 {
             return;
         }
-        for j in 0..self.h {
-            for i in 0..self.w {
-                let gi = self.idx(i + 1, j + 1);
-                let si = (j * self.w + i) * 4;
-                let dens = self.d[gi].clamp(0.0, 16.0);
-                let dry = self.dry[gi];
-                let edge = self.edge_darken(gi) * 1.8;
-                let ink_amt = (dens * 0.38 + edge).min(1.35);
-                let fade = 1.0 - dry * 0.65;
-                let pr = (self.dr[gi] / 3.5).clamp(0.02, 1.0);
-                let pg = (self.dg[gi] / 3.5).clamp(0.02, 1.0);
-                let pb = (self.db[gi] / 3.5).clamp(0.02, 1.0);
-                out[si] = pr;
-                out[si + 1] = pg;
-                out[si + 2] = pb;
-                out[si + 3] = (ink_amt * fade).clamp(0.0, 1.0);
-            }
+        for i in 0..n {
+            let core = self.mark[i].max(self.flow[i]).clamp(0.0, 1.0);
+            let wash = self.wash[i].clamp(0.0, 1.0);
+            let settled = self.settled[i].clamp(0.0, 1.0);
+            let wet = self.wet[i].clamp(0.0, 1.0);
+            let o = i * 4;
+            out[o] = core;
+            out[o + 1] = wash;
+            out[o + 2] = settled;
+            out[o + 3] = wet;
         }
     }
-}
-
-fn grid_idx(w: usize, i: usize, j: usize) -> usize {
-    i + j * (w + 2)
-}
-
-fn set_bnd(w: usize, h: usize, b: usize, x: &mut [f32]) {
-    for i in 1..=w {
-        x[grid_idx(w, i, 0)] = if b == 2 {
-            -x[grid_idx(w, i, 1)]
-        } else {
-            x[grid_idx(w, i, 1)]
-        };
-        x[grid_idx(w, i, h + 1)] = if b == 2 {
-            -x[grid_idx(w, i, h)]
-        } else {
-            x[grid_idx(w, i, h)]
-        };
-    }
-    for j in 1..=h {
-        x[grid_idx(w, 0, j)] = if b == 1 {
-            -x[grid_idx(w, 1, j)]
-        } else {
-            x[grid_idx(w, 1, j)]
-        };
-        x[grid_idx(w, w + 1, j)] = if b == 1 {
-            -x[grid_idx(w, w, j)]
-        } else {
-            x[grid_idx(w, w, j)]
-        };
-    }
-    x[grid_idx(w, 0, 0)] = 0.5 * (x[grid_idx(w, 1, 0)] + x[grid_idx(w, 0, 1)]);
-    x[grid_idx(w, 0, h + 1)] = 0.5 * (x[grid_idx(w, 1, h + 1)] + x[grid_idx(w, 0, h)]);
-    x[grid_idx(w, w + 1, 0)] = 0.5 * (x[grid_idx(w, w, 0)] + x[grid_idx(w, w + 1, 1)]);
-    x[grid_idx(w, w + 1, h + 1)] = 0.5 * (x[grid_idx(w, w, h + 1)] + x[grid_idx(w, w + 1, h)]);
-}
-
-fn lin_solve(w: usize, h: usize, iter: u32, x: &mut [f32], x0: &[f32], a: f32, b: usize) {
-    let c = 1.0 + 4.0 * a;
-    for _ in 0..iter {
-        for j in 1..=h {
-            for i in 1..=w {
-                let idx = grid_idx(w, i, j);
-                x[idx] = (x0[idx]
-                    + a
-                        * (x[grid_idx(w, i - 1, j)]
-                            + x[grid_idx(w, i + 1, j)]
-                            + x[grid_idx(w, i, j - 1)]
-                            + x[grid_idx(w, i, j + 1)]))
-                    / c;
-            }
-        }
-        set_bnd(w, h, b, x);
-    }
-}
-
-fn advect_field(
-    w: usize,
-    h: usize,
-    dt: f32,
-    d: &mut [f32],
-    d0: &[f32],
-    u: &[f32],
-    v: &[f32],
-    b: usize,
-) {
-    let dt0 = dt * (w as f32).min(h as f32);
-    for j in 1..=h {
-        for i in 1..=w {
-            let idx = grid_idx(w, i, j);
-            let mut x = i as f32 - dt0 * u[idx];
-            let mut y = j as f32 - dt0 * v[idx];
-            x = x.clamp(0.5, w as f32 + 0.5);
-            y = y.clamp(0.5, h as f32 + 0.5);
-            let i0 = x.floor() as usize;
-            let i1 = i0 + 1;
-            let j0 = y.floor() as usize;
-            let j1 = j0 + 1;
-            let s1 = x - i0 as f32;
-            let s0 = 1.0 - s1;
-            let t1 = y - j0 as f32;
-            let t0 = 1.0 - t1;
-            d[idx] = s0 * (t0 * d0[grid_idx(w, i0, j0)] + t1 * d0[grid_idx(w, i0, j1)])
-                + s1 * (t0 * d0[grid_idx(w, i1, j0)] + t1 * d0[grid_idx(w, i1, j1)]);
-        }
-    }
-    set_bnd(w, h, b, d);
 }
 
 impl InkSim {
-    fn idx(&self, i: usize, j: usize) -> usize {
-        grid_idx(self.w, i, j)
+    fn pidx(&self, i: usize, j: usize) -> usize {
+        i + j * self.pw
+    }
+
+    fn vidx(&self, i: usize, j: usize) -> usize {
+        i + j * (self.vw + 2)
     }
 
     fn build_fibers(&mut self) {
-        for j in 0..self.h + 2 {
-            for i in 0..self.w + 2 {
-                let gi = self.idx(i, j);
-                let fx = (i as f32 * 12.9898 + j as f32 * 78.233).sin() * 43758.545;
-                let fy = (i as f32 * 93.9898 + j as f32 * 67.345).sin() * 23_421.63;
-                let a = (fx.fract() * std::f32::consts::TAU).cos();
-                let b = (fy.fract() * std::f32::consts::TAU).sin();
-                let len = (a * a + b * b).sqrt().max(0.001);
-                self.fiber_u[gi] = a / len;
-                self.fiber_v[gi] = b / len;
+        for j in 0..self.ph {
+            for i in 0..self.pw {
+                let id = self.pidx(i, j);
+                let n = hash4(i as f32 * 0.17, j as f32 * 0.05, 1, 0);
+                let slow = (i as f32 * 0.004).sin() * 0.35 + (j as f32 * 0.02).cos() * 0.12;
+                let ang = (n - 0.5) * 0.55 + slow;
+                self.fu[id] = ang.cos();
+                self.fv[id] = ang.sin();
             }
         }
     }
 
-    fn edge_darken(&self, gi: usize) -> f32 {
-        let d = self.d[gi];
-        if d < 0.02 {
-            return 0.0;
+    fn sample(&self, field: &[f32], x: f32, y: f32) -> f32 {
+        let x = x.clamp(0.0, (self.pw - 1) as f32);
+        let y = y.clamp(0.0, (self.ph - 1) as f32);
+        let i0 = x.floor() as usize;
+        let j0 = y.floor() as usize;
+        let i1 = (i0 + 1).min(self.pw - 1);
+        let j1 = (j0 + 1).min(self.ph - 1);
+        let tx = x - i0 as f32;
+        let ty = y - j0 as f32;
+        let a = field[self.pidx(i0, j0)];
+        let b = field[self.pidx(i1, j0)];
+        let c = field[self.pidx(i0, j1)];
+        let d = field[self.pidx(i1, j1)];
+        let ab = a + (b - a) * tx;
+        let cd = c + (d - c) * tx;
+        ab + (cd - ab) * ty
+    }
+
+    fn vel_at(&self, x: f32, y: f32) -> (f32, f32) {
+        let sx = self.pw as f32 / self.vw as f32;
+        let sy = self.ph as f32 / self.vh as f32;
+        let cx = (x / sx).clamp(0.0, (self.vw - 1) as f32);
+        let cy = (y / sy).clamp(0.0, (self.vh - 1) as f32);
+        let i0 = cx.floor() as usize;
+        let j0 = cy.floor() as usize;
+        let i1 = (i0 + 1).min(self.vw - 1);
+        let j1 = (j0 + 1).min(self.vh - 1);
+        let tx = cx - i0 as f32;
+        let ty = cy - j0 as f32;
+        let grab = |field: &[f32], i: usize, j: usize| field[self.vidx(i + 1, j + 1)];
+        let lerp = |field: &[f32]| {
+            let a = grab(field, i0, j0);
+            let b = grab(field, i1, j0);
+            let c = grab(field, i0, j1);
+            let d = grab(field, i1, j1);
+            let ab = a + (b - a) * tx;
+            let cd = c + (d - c) * tx;
+            ab + (cd - ab) * ty
+        };
+        (lerp(&self.u), lerp(&self.v))
+    }
+
+    fn stamp(&mut self, x: f32, y: f32, rad: f32, amount: f32, core: bool) {
+        if amount <= 0.0 || rad <= 0.2 {
+            return;
         }
-        let lap = self.laplacian_d(gi);
-        (lap.max(0.0) * 0.08 * self.dry[gi]).min(0.35)
-    }
-
-    fn laplacian_d(&self, gi: usize) -> f32 {
-        let i = gi % (self.w + 2);
-        let j = gi / (self.w + 2);
-        self.d[self.idx(i + 1, j)]
-            + self.d[self.idx(i - 1, j)]
-            + self.d[self.idx(i, j + 1)]
-            + self.d[self.idx(i, j - 1)]
-            - self.d[gi] * 4.0
-    }
-
-    fn diffuse(&mut self, visc: f32, _b: usize) {
-        let a = self.dt * visc * (self.w * self.h) as f32;
-        std::mem::swap(&mut self.u, &mut self.u_prev);
-        lin_solve(self.w, self.h, self.iter, &mut self.u, &self.u_prev, a, 1);
-        std::mem::swap(&mut self.v, &mut self.v_prev);
-        lin_solve(self.w, self.h, self.iter, &mut self.v, &self.v_prev, a, 2);
-    }
-
-    fn diffuse_scalar(&mut self, diff: f32) {
-        let a = self.dt * diff * (self.w * self.h) as f32;
-        std::mem::swap(&mut self.d, &mut self.d_prev);
-        lin_solve(self.w, self.h, self.iter, &mut self.d, &self.d_prev, a, 0);
-    }
-
-    fn project(&mut self) {
-        let w = self.w;
-        let h = self.h;
-        let mut p = vec![0.0; (w + 2) * (h + 2)];
-        let mut div = vec![0.0; (w + 2) * (h + 2)];
-        let h_inv = -0.5 / w as f32;
-        for j in 1..=h {
-            for i in 1..=w {
-                let idx = self.idx(i, j);
-                div[idx] = h_inv
-                    * (self.u[self.idx(i + 1, j)] - self.u[self.idx(i - 1, j)]
-                        + self.v[self.idx(i, j + 1)] - self.v[self.idx(i, j - 1)]);
-                p[idx] = 0.0;
-            }
-        }
-        set_bnd(w, h, 0, &mut div);
-        set_bnd(w, h, 0, &mut p);
-        lin_solve(w, h, self.iter, &mut p, &div, 1.0, 0);
-        for j in 1..=h {
-            for i in 1..=w {
-                let idx = self.idx(i, j);
-                self.u[idx] -= 0.5 * w as f32 * (p[self.idx(i + 1, j)] - p[self.idx(i - 1, j)]);
-                self.v[idx] -= 0.5 * h as f32 * (p[self.idx(i, j + 1)] - p[self.idx(i, j - 1)]);
-            }
-        }
-        set_bnd(w, h, 1, &mut self.u);
-        set_bnd(w, h, 2, &mut self.v);
-    }
-
-    fn advect_velocity(&mut self) {
-        let u = self.u.clone();
-        let v = self.v.clone();
-        advect_field(self.w, self.h, self.dt, &mut self.u, &u, &u, &v, 1);
-        advect_field(self.w, self.h, self.dt, &mut self.v, &v, &u, &v, 2);
-    }
-
-    fn advect_density(&mut self) {
-        let d0 = self.d.clone();
-        let u = self.u.clone();
-        let v = self.v.clone();
-        advect_field(self.w, self.h, self.dt, &mut self.d, &d0, &u, &v, 0);
-        for j in 1..=self.h {
-            for i in 1..=self.w {
-                let gi = self.idx(i, j);
-                let fu = self.fiber_u[gi];
-                let fv = self.fiber_v[gi];
-                let bleed = 0.015 * self.dt * 60.0;
-                self.d[gi] += bleed
-                    * (fu * (self.d[self.idx(i + 1, j)] - self.d[self.idx(i - 1, j)])
-                        + fv * (self.d[self.idx(i, j + 1)] - self.d[self.idx(i, j - 1)]));
-            }
-        }
-    }
-
-    fn project_obstacles(&mut self) {
-        for j in 1..=self.h {
-            for i in 1..=self.w {
-                let gi = self.idx(i, j);
-                if self.obstacle[gi] > 0.5 {
-                    self.u[gi] = 0.0;
-                    self.v[gi] = 0.0;
+        let rad = rad.max(0.8);
+        let min_i = ((x - rad).floor() as i32).max(0);
+        let max_i = ((x + rad).ceil() as i32).min(self.pw as i32 - 1);
+        let min_j = ((y - rad).floor() as i32).max(0);
+        let max_j = ((y + rad).ceil() as i32).min(self.ph as i32 - 1);
+        let r2 = rad * rad;
+        let hard = if core { 0.78 } else { 0.42 };
+        for j in min_j..=max_j {
+            for i in min_i..=max_i {
+                let dx = i as f32 + 0.5 - x;
+                let dy = j as f32 + 0.5 - y;
+                let d2 = dx * dx + dy * dy;
+                if d2 > r2 {
                     continue;
                 }
-                if self.repel[gi] > 0.1 {
-                    let nx = self.repel[gi];
-                    self.u[gi] *= 1.0 - nx;
-                    self.v[gi] *= 1.0 - nx;
-                }
-            }
-        }
-    }
-
-    fn add_vorticity(&mut self) {
-        let eps = self.vorticity * 0.0001;
-        let mut curl = vec![0.0; (self.w + 2) * (self.h + 2)];
-        for j in 2..self.h {
-            for i in 2..self.w {
-                let gi = self.idx(i, j);
-                curl[gi] = 0.5
-                    * ((self.v[self.idx(i + 1, j)] - self.v[self.idx(i - 1, j)])
-                        - (self.u[self.idx(i, j + 1)] - self.u[self.idx(i, j - 1)]));
-            }
-        }
-        for j in 2..self.h {
-            for i in 2..self.w {
-                let gi = self.idx(i, j);
-                let a = (curl[self.idx(i + 1, j)].abs()
-                    + curl[self.idx(i - 1, j)].abs()
-                    + curl[self.idx(i, j + 1)].abs()
-                    + curl[self.idx(i, j - 1)].abs())
-                    * 0.25
-                    + 1e-5;
-                let cx = (curl[self.idx(i, j + 1)] - curl[self.idx(i, j - 1)]) / a;
-                let cy = (curl[self.idx(i + 1, j)] - curl[self.idx(i - 1, j)]) / a;
-                self.u[gi] += eps * cy;
-                self.v[gi] -= eps * cx;
-            }
-        }
-    }
-
-    fn apply_drying(&mut self) {
-        let rate = self.drying * self.dt * 0.35;
-        for j in 1..=self.h {
-            for i in 1..=self.w {
-                let gi = self.idx(i, j);
-                let d = self.d[gi];
-                if d < 0.001 {
+                let d = d2.sqrt() / rad;
+                let k = if d < hard {
+                    1.0
+                } else {
+                    (1.0 - (d - hard) / (1.0 - hard)).clamp(0.0, 1.0)
+                };
+                let id = self.pidx(i as usize, j as usize);
+                if self.obs[id] > 0.5 {
                     continue;
                 }
-                let edge = self.laplacian_d(gi).abs();
-                self.dry[gi] = (self.dry[gi] + rate * (1.0 + edge * 2.0)).min(1.0);
-                let fade = 1.0 - rate * (0.04 + self.dry[gi] * 0.12);
-                self.d[gi] *= fade.max(0.997);
+                let soak = 1.0 - self.absorb[id] * 0.35;
+                if core {
+                    let add = amount * k * soak;
+                    self.mark[id] = (self.mark[id] + add).min(1.0);
+                    self.flow[id] = (self.flow[id] + add * 0.92).min(1.0);
+                    self.wet[id] = (self.wet[id] + add).min(1.0);
+                } else {
+                    let add = amount * k * soak;
+                    self.wash[id] = (self.wash[id] + add).min(1.0);
+                    self.wet[id] = (self.wet[id] + add * 0.55).min(1.0);
+                }
             }
         }
     }
 
-    fn clamp_density(&mut self) {
-        for v in self.d.iter_mut() {
-            *v = v.clamp(0.0, 12.0);
+    fn add_vel(&mut self, px: f32, py: f32, vx: f32, vy: f32, rad: f32) {
+        let sx = self.pw as f32 / self.vw as f32;
+        let sy = self.ph as f32 / self.vh as f32;
+        let cx = px / sx;
+        let cy = py / sy;
+        let cr = (rad / sx).max(1.0);
+        let min_i = ((cx - cr).floor() as i32).max(0);
+        let max_i = ((cx + cr).ceil() as i32).min(self.vw as i32 - 1);
+        let min_j = ((cy - cr).floor() as i32).max(0);
+        let max_j = ((cy + cr).ceil() as i32).min(self.vh as i32 - 1);
+        let r2 = cr * cr;
+        for j in min_j..=max_j {
+            for i in min_i..=max_i {
+                let dx = i as f32 + 0.5 - cx;
+                let dy = j as f32 + 0.5 - cy;
+                let d2 = dx * dx + dy * dy;
+                if d2 > r2 {
+                    continue;
+                }
+                let k = 1.0 - (d2 / r2).sqrt();
+                let id = self.vidx(i as usize + 1, j as usize + 1);
+                self.u[id] += vx * k;
+                self.v[id] += vy * k;
+            }
         }
+    }
+
+    fn damp_velocity(&mut self) {
+        let damp = (1.0 - self.viscosity * 280.0).clamp(0.9, 0.985);
+        for q in self.u.iter_mut() {
+            *q = (*q * damp).clamp(-70.0, 70.0);
+        }
+        for q in self.v.iter_mut() {
+            *q = (*q * damp).clamp(-70.0, 70.0);
+        }
+    }
+
+    fn slide_obstacles(&mut self) {
+        let sx = self.scale;
+        let sy = self.scale;
+        for j in 0..self.vh {
+            for i in 0..self.vw {
+                let id = self.vidx(i + 1, j + 1);
+                let pi = (i * sx + sx / 2).min(self.pw - 1);
+                let pj = (j * sy + sy / 2).min(self.ph - 1);
+                if self.obs[self.pidx(pi, pj)] > 0.5 {
+                    self.u[id] = 0.0;
+                    self.v[id] = 0.0;
+                    continue;
+                }
+                let i1 = (pi + sx).min(self.pw - 1);
+                let i0 = pi.saturating_sub(sx);
+                let j1 = (pj + sy).min(self.ph - 1);
+                let j0 = pj.saturating_sub(sy);
+                let gx = self.obs[self.pidx(i1, pj)] - self.obs[self.pidx(i0, pj)];
+                let gy = self.obs[self.pidx(pi, j1)] - self.obs[self.pidx(pi, j0)];
+                let gl = (gx * gx + gy * gy).sqrt();
+                if gl < 0.05 {
+                    continue;
+                }
+                let nx = gx / gl;
+                let ny = gy / gl;
+                let vn = self.u[id] * nx + self.v[id] * ny;
+                if vn > 0.0 {
+                    self.u[id] -= vn * nx;
+                    self.v[id] -= vn * ny;
+                    let slide = vn * 0.35 * self.vorticity.min(4.0);
+                    self.u[id] += -ny * slide;
+                    self.v[id] += nx * slide;
+                }
+            }
+        }
+    }
+
+    fn advect_velocity(&mut self, dt: f32) {
+        let u0 = self.u.clone();
+        let v0 = self.v.clone();
+        let stride = self.vw + 2;
+        let vw = self.vw;
+        let vh = self.vh;
+        let sx = self.scale as f32;
+        for j in 1..=vh {
+            for i in 1..=vw {
+                let id = i + j * stride;
+                let mut x = i as f32 - dt * u0[id] / sx;
+                let mut y = j as f32 - dt * v0[id] / sx;
+                x = x.clamp(0.5, vw as f32 + 0.5);
+                y = y.clamp(0.5, vh as f32 + 0.5);
+                let i0 = x.floor() as usize;
+                let j0 = y.floor() as usize;
+                let i1 = (i0 + 1).min(vw + 1);
+                let j1 = (j0 + 1).min(vh + 1);
+                let tx = x - i0 as f32;
+                let ty = y - j0 as f32;
+                let at = |field: &[f32], ii: usize, jj: usize| field[ii + jj * stride];
+                let lerp = |field: &[f32]| {
+                    let a = at(field, i0, j0);
+                    let b = at(field, i1, j0);
+                    let c = at(field, i0, j1);
+                    let d = at(field, i1, j1);
+                    let ab = a + (b - a) * tx;
+                    let cd = c + (d - c) * tx;
+                    ab + (cd - ab) * ty
+                };
+                self.u[id] = lerp(&u0);
+                self.v[id] = lerp(&v0);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn maccormack(&self, src: &[f32], dt: f32, wet_follow: f32) -> Vec<f32> {
+        let n = self.pw * self.ph;
+        let mut hat = vec![0.0_f32; n];
+        for j in 0..self.ph {
+            for i in 0..self.pw {
+                let id = self.pidx(i, j);
+                let (u, v) = self.vel_at(i as f32, j as f32);
+                let x = i as f32 - u * dt;
+                let y = j as f32 - v * dt;
+                hat[id] = self.sample(src, x, y);
+            }
+        }
+        let mut dst = vec![0.0_f32; n];
+        for j in 0..self.ph {
+            for i in 0..self.pw {
+                let id = self.pidx(i, j);
+                if self.obs[id] > 0.5 {
+                    continue;
+                }
+                let (u, v) = self.vel_at(i as f32, j as f32);
+                let x = i as f32 - u * dt;
+                let y = j as f32 - v * dt;
+                let back = self.sample(&hat, x, y);
+                let fwd = self.sample(&hat, i as f32 + u * dt, j as f32 + v * dt);
+                let mut corrected = back + 0.5 * (src[id] - fwd);
+                let i0 = (x.floor() as i32).clamp(0, self.pw as i32 - 1) as usize;
+                let j0 = (y.floor() as i32).clamp(0, self.ph as i32 - 1) as usize;
+                let i1 = (i0 + 1).min(self.pw - 1);
+                let j1 = (j0 + 1).min(self.ph - 1);
+                let mut nmin = src[self.pidx(i0, j0)];
+                let mut nmax = nmin;
+                for (ii, jj) in [(i0, j0), (i1, j0), (i0, j1), (i1, j1)] {
+                    let s = src[self.pidx(ii, jj)];
+                    nmin = nmin.min(s);
+                    nmax = nmax.max(s);
+                }
+                corrected = corrected.clamp(nmin, nmax).clamp(0.0, 1.0);
+                let wet = self.wet[id].clamp(0.0, 1.0) * wet_follow;
+                let follow = wet.clamp(0.0, 1.0);
+                dst[id] = src[id] * (1.0 - follow) + corrected * follow;
+            }
+        }
+        dst
+    }
+
+    fn aniso_diffuse_wash(&mut self, rate: f32) {
+        self.wash_tmp.copy_from_slice(&self.wash);
+        for j in 0..self.ph {
+            for i in 0..self.pw {
+                let id = self.pidx(i, j);
+                if self.obs[id] > 0.5 || self.wet[id] < 0.05 {
+                    continue;
+                }
+                let fu = self.fu[id];
+                let fv = self.fv[id];
+                let a = self.sample(&self.wash_tmp, i as f32 + fu * 1.7, j as f32 + fv * 1.7);
+                let b = self.sample(&self.wash_tmp, i as f32 - fu * 1.7, j as f32 - fv * 1.7);
+                let along = 0.5 * (a + b);
+                let cur = self.wash_tmp[id];
+                let mut pull = (along - cur) * rate * self.wet[id];
+                if cur < 0.22 && along > cur + 0.04 {
+                    pull *= 1.65;
+                }
+                self.wash[id] = (cur + pull).clamp(0.0, 1.0);
+            }
+        }
+    }
+
+    #[allow(dead_code)]
+    fn aniso_diffuse_flow(&mut self, rate: f32) {
+        if rate <= 0.0 {
+            return;
+        }
+        self.flow_tmp.copy_from_slice(&self.flow);
+        for j in 0..self.ph {
+            for i in 0..self.pw {
+                let id = self.pidx(i, j);
+                if self.obs[id] > 0.5 || self.wet[id] < 0.08 {
+                    continue;
+                }
+                let fu = self.fu[id];
+                let fv = self.fv[id];
+                let a = self.sample(&self.flow_tmp, i as f32 + fu * 1.25, j as f32 + fv * 1.25);
+                let b = self.sample(&self.flow_tmp, i as f32 - fu * 1.25, j as f32 - fv * 1.25);
+                let along = 0.5 * (a + b);
+                let cur = self.flow_tmp[id];
+                self.flow[id] = (cur + (along - cur) * rate * self.wet[id]).clamp(0.0, 1.0);
+            }
+        }
+    }
+
+    fn sprout_tendrils(&mut self) {
+        let src = self.flow.clone();
+        for j in 2..self.ph - 2 {
+            if j % 2 == 1 {
+                continue;
+            }
+            for i in 2..self.pw - 2 {
+                if i % 2 == 1 {
+                    continue;
+                }
+                let id = self.pidx(i, j);
+                if self.obs[id] > 0.5 {
+                    continue;
+                }
+                let c = src[id];
+                if !(0.28..0.82).contains(&c) {
+                    continue;
+                }
+                let fu = self.fu[id];
+                let fv = self.fv[id];
+                let ahead = self.sample(&src, i as f32 + fu * 3.0, j as f32 + fv * 3.0);
+                if ahead > 0.18 {
+                    continue;
+                }
+                let h = hash4(i as f32, j as f32, self.frame as i32, 4);
+                if h < 0.9 {
+                    continue;
+                }
+                let len = 5.0 + h * 16.0;
+                let steps = len as i32;
+                for s in 1..=steps {
+                    let f = s as f32 / steps as f32;
+                    let x = i as f32 + fu * s as f32 * 1.15;
+                    let y = j as f32 + fv * s as f32 * 1.15;
+                    let ii = x.round() as i32;
+                    let jj = y.round() as i32;
+                    if ii < 0 || jj < 0 || ii >= self.pw as i32 || jj >= self.ph as i32 {
+                        break;
+                    }
+                    let pid = self.pidx(ii as usize, jj as usize);
+                    if self.obs[pid] > 0.5 {
+                        break;
+                    }
+                    let dep = (1.0 - f) * 0.72 * c;
+                    self.flow[pid] = self.flow[pid].max(dep);
+                    self.wash[pid] = (self.wash[pid] + dep * 0.35).min(1.0);
+                }
+            }
+        }
+    }
+
+    fn dry_and_freeze(&mut self, dt: f32) {
+        let decay = (1.0 - self.drying * dt * 1.15).clamp(0.985, 0.999);
+        for i in 0..self.mark.len() {
+            if self.absorb[i] > 0.45 {
+                self.wet[i] *= 0.94;
+                self.wash[i] = (self.wash[i] + self.mark[i] * 0.04).min(1.0);
+            }
+            let w = self.wet[i];
+            if w < 0.35 {
+                self.settled[i] = (self.settled[i] + self.mark[i] * (0.35 - w) * 0.08).min(1.0);
+            }
+            self.wet[i] = (w * decay).clamp(0.0, 1.0);
+        }
+    }
+
+    fn knockout_obstacles(&mut self) {
+        for i in 0..self.obs.len() {
+            if self.obs[i] > 0.5 {
+                self.mark[i] = 0.0;
+                self.flow[i] = 0.0;
+                self.wash[i] = 0.0;
+            }
+        }
+    }
+}
+
+fn advect_scalar(
+    pw: usize,
+    ph: usize,
+    vw: usize,
+    vh: usize,
+    src: &[f32],
+    dst: &mut [f32],
+    u: &[f32],
+    v: &[f32],
+    wet: &[f32],
+    obs: &[f32],
+    dt: f32,
+    follow: f32,
+) {
+    let sx = pw as f32 / vw as f32;
+    let sy = ph as f32 / vh as f32;
+    let stride = vw + 2;
+    for j in 0..ph {
+        for i in 0..pw {
+            let id = i + j * pw;
+            if obs[id] > 0.5 {
+                dst[id] = 0.0;
+                continue;
+            }
+            let w = (wet[id] * follow).clamp(0.0, 1.0);
+            if w < 0.04 {
+                dst[id] = src[id];
+                continue;
+            }
+            let cx = (i as f32 / sx).clamp(0.0, (vw - 1) as f32);
+            let cy = (j as f32 / sy).clamp(0.0, (vh - 1) as f32);
+            let i0 = cx.floor() as usize;
+            let j0 = cy.floor() as usize;
+            let i1 = (i0 + 1).min(vw - 1);
+            let j1 = (j0 + 1).min(vh - 1);
+            let tx = cx - i0 as f32;
+            let ty = cy - j0 as f32;
+            let at = |field: &[f32], ii: usize, jj: usize| field[(ii + 1) + (jj + 1) * stride];
+            let lerp = |field: &[f32]| {
+                let a = at(field, i0, j0);
+                let b = at(field, i1, j0);
+                let c = at(field, i0, j1);
+                let d = at(field, i1, j1);
+                let ab = a + (b - a) * tx;
+                let cd = c + (d - c) * tx;
+                ab + (cd - ab) * ty
+            };
+            let vx = lerp(u);
+            let vy = lerp(v);
+            let x = (i as f32 - vx * dt).clamp(0.0, (pw - 1) as f32);
+            let y = (j as f32 - vy * dt).clamp(0.0, (ph - 1) as f32);
+            let xi = x.floor() as usize;
+            let yi = y.floor() as usize;
+            let xi1 = (xi + 1).min(pw - 1);
+            let yi1 = (yi + 1).min(ph - 1);
+            let fx = x - xi as f32;
+            let fy = y - yi as f32;
+            let s00 = src[xi + yi * pw];
+            let s10 = src[xi1 + yi * pw];
+            let s01 = src[xi + yi1 * pw];
+            let s11 = src[xi1 + yi1 * pw];
+            let sample = s00 + (s10 - s00) * fx + (s01 - s00) * fy + (s00 - s10 - s01 + s11) * fx * fy;
+            dst[id] = src[id] * (1.0 - w) + sample * w;
+        }
+    }
+}
+
+fn hash4(a: f32, b: f32, c: i32, d: i32) -> f32 {
+    let n = a * 12.9898 + b * 78.233 + c as f32 * 37.719 + d as f32 * 19.13;
+    let s = (n.sin() * 43_758.5).fract();
+    if s < 0.0 {
+        s + 1.0
+    } else {
+        s
     }
 }
 
@@ -504,10 +794,53 @@ mod tests {
     use super::*;
 
     #[test]
-    fn splat_increases_density() {
-        let mut sim = InkSim::new(64, 64);
-        sim.splat(0.5, 0.5, 4.0, 1.0, 0.05, 0.05, 0.08, 0.0, 0.0);
-        let gi = sim.idx(32, 32);
-        assert!(sim.d[gi] > 0.0);
+    fn stroke_deposits_sharp_core() {
+        let mut sim = InkSim::new(48, 32, 4);
+        sim.stroke_segment(0.15, 0.5, 0.85, 0.52, 7.0, 0.95, 1.0, 0.15, 0.05);
+        let n = sim.width() as usize * sim.height() as usize;
+        let mut out = vec![0.0; n * 4];
+        sim.copy_density_rgba(&mut out);
+        let mut dark = 0;
+        let mut mid = 0;
+        for i in 0..n {
+            let c = out[i * 4];
+            if c > 0.72 {
+                dark += 1;
+            } else if c > 0.15 {
+                mid += 1;
+            }
+        }
+        assert!(dark > 30, "expected a dense core, dark={dark} mid={mid}");
+        assert!(dark > mid / 4, "core should not be a soft halo, dark={dark} mid={mid}");
+    }
+
+    #[test]
+    fn obstacle_rejects_ink() {
+        let mut sim = InkSim::new(32, 24, 2);
+        let n = (sim.width() * sim.height()) as usize;
+        let mut mask = vec![0.0; n * 3];
+        for j in 8..16 {
+            for i in 20..44 {
+                if i < sim.width() as usize {
+                    mask[j * sim.width() as usize + i] = 1.0;
+                }
+            }
+        }
+        sim.set_obstacle_mask(&mask);
+        sim.stroke_segment(0.05, 0.5, 0.95, 0.5, 5.0, 1.0, 1.0, 0.1, 0.0);
+        let w = sim.width() as usize;
+        let mut blocked = 0.0;
+        let mut count = 0.0;
+        for j in 8..16 {
+            for i in 20..44 {
+                if i >= w {
+                    continue;
+                }
+                blocked += sim.mark[j * w + i];
+                count += 1.0;
+            }
+        }
+        assert!(count > 0.0);
+        assert!(blocked == 0.0, "ink leaked into obstacle");
     }
 }

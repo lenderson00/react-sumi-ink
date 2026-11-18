@@ -34,13 +34,18 @@ const paintGlyphs = (ctx: CanvasRenderingContext2D, root: HTMLElement, stage: DO
     ctx.font = font;
     ctx.textAlign = 'left';
     ctx.textBaseline = 'top';
-    ctx.fillStyle = role === 'obstacle' ? '#fff' : role === 'absorb' ? '#0f0' : role === 'repel' ? '#00f' : '#000';
+    const color = role === 'absorb' ? '#00ff00' : role === 'repel' ? '#0000ff' : '#ff0000';
+    ctx.fillStyle = color;
+    ctx.strokeStyle = color;
+    ctx.lineWidth = Math.max(6, (parseFloat(cs.fontSize) || 24) * 0.055);
+    ctx.lineJoin = 'round';
     const x = r.left - stage.left;
     const y = r.top - stage.top;
     const lines = text.split('\n');
     let dy = 0;
-    const lh = (parseFloat(cs.lineHeight) || parseFloat(cs.fontSize) * 1.2) || 20;
+    const lh = parseFloat(cs.lineHeight) || (parseFloat(cs.fontSize) || 20) * 1.15;
     for (const line of lines) {
+      ctx.strokeText(line, x, y + dy);
       ctx.fillText(line, x, y + dy);
       dy += lh;
     }
@@ -54,6 +59,7 @@ export const collectInkRects = (root: HTMLElement): InkObstacleRect[] => {
   nodes.forEach((el) => {
     const role = parseInkRole(el);
     if (role === 'ignore') return;
+    if (el.hasAttribute('data-ink-glyphs')) return;
     const r = el.getBoundingClientRect();
     if (r.width < 2 || r.height < 2) return;
     out.push({

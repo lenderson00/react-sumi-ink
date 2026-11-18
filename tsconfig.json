@@ -11,7 +11,7 @@
     "isolatedModules": true,
     "paths": {
       "react-sumi-ink": ["./packages/react-sumi-ink/src/index.ts"],
-      "sumi-ink-sim": ["./packages/react-sumi-ink/wasm/pkg/sumi_ink_sim.js"]
+      "sumi-ink-sim": ["./packages/react-sumi-ink/wasm/pkg/sumi_ink_sim.d.ts"]
     }
   },
   "include": ["src", "packages/react-sumi-ink/src"]

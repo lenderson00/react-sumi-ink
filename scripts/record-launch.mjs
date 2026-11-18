@@ -34,7 +34,7 @@ async function main() {
 
   const browser = await chromium.launch({
     headless: true,
-    args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader'],
+    args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--disable-gpu'],
   });
 
   const record = async (viewport, file, fn) => {
@@ -44,8 +44,8 @@ async function main() {
     });
     const page = await ctx.newPage();
     const base = process.env.INK_DEMO_URL || 'http://127.0.0.1:4178';
-    await page.goto(`${base}/#/playground`, { waitUntil: 'networkidle', timeout: 60000 });
-    await page.waitForTimeout(2000);
+    await page.goto(`${base}/?ink-main=1#/`, { waitUntil: 'domcontentloaded', timeout: 60000 });
+    await page.waitForFunction(() => window.__inkReplay, null, { timeout: 20000 });
     await fn(page);
     await page.waitForTimeout(500);
     const vpath = await page.video()?.path();
@@ -54,52 +54,35 @@ async function main() {
   };
 
   await record({ width: 1920, height: 1080 }, `${ART}/launch-demo.mp4`, async (page) => {
-    const box = await page.locator('.stage').boundingBox();
-    if (!box) return;
-    for (let i = 0; i < 40; i++) {
-      const x = box.x + 180 + i * 36;
-      const y = box.y + 220 + Math.sin(i * 0.35) * 80;
-      await page.mouse.move(x, y);
+    await page.evaluate(() => {
+      window.__inkClear();
+      window.__inkReplay(true);
+    });
+    await page.waitForTimeout(6000);
+    const box = await page.locator('.studio-stage').boundingBox();
+    if (box) {
+      await page.mouse.move(box.x + 160, box.y + 280);
       await page.mouse.down();
-      await page.mouse.move(x + 40, y + 28, { steps: 6 });
+      await page.mouse.move(box.x + 420, box.y + 520, { steps: 18 });
       await page.mouse.up();
-      await page.waitForTimeout(120);
     }
-    await page.locator('.scene-ink-btn').click();
-    await page.waitForTimeout(600);
-    await page.selectOption('.cp-select', 'koi');
-    await page.waitForTimeout(800);
-    await page.mouse.move(box.x + 400, box.y + 350);
-    await page.mouse.down();
-    await page.mouse.move(box.x + 700, box.y + 420, { steps: 16 });
-    await page.mouse.up();
-    await page.waitForTimeout(1000);
-    await page.selectOption('.cp-select', 'smoke');
-    await page.waitForTimeout(1200);
-    await page.evaluate(() => document.documentElement.dataset.theme = 'dark');
-    await page.waitForTimeout(2000);
-    await page.goto('http://127.0.0.1:5198/#/');
-    await page.waitForTimeout(2500);
-    await page.goto('http://127.0.0.1:5198/#/playground');
-    await page.waitForTimeout(3000);
+    await page.waitForTimeout(8000);
   });
 
   await record({ width: 1080, height: 1920 }, `${ART}/launch-demo-mobile.mp4`, async (page) => {
-    const box = await page.locator('.stage').boundingBox();
-    if (!box) return;
-    for (let i = 0; i < 18; i++) {
-      const x = box.x + 80 + i * 30;
-      const y = box.y + 280 + i * 22;
-      await page.mouse.move(x, y);
+    await page.evaluate(() => {
+      window.__inkClear();
+      window.__inkReplay(true);
+    });
+    await page.waitForTimeout(3500);
+    const box = await page.locator('.studio-stage').boundingBox();
+    if (box) {
+      await page.mouse.move(box.x + 80, box.y + 700);
       await page.mouse.down();
-      await page.mouse.move(x + 20, y + 35, { steps: 4 });
+      await page.mouse.move(box.x + 240, box.y + 980, { steps: 12 });
       await page.mouse.up();
-      await page.waitForTimeout(150);
     }
-    await page.locator('.scene-ink-btn').click();
-    await page.waitForTimeout(400);
-    await page.selectOption('.cp-select', 'sumi');
-    await page.waitForTimeout(2500);
+    await page.waitForTimeout(4500);
   });
 
   await browser.close();
@@ -111,6 +94,8 @@ async function main() {
     '-y',
     '-i',
     `${ART}/launch-demo.mp4`,
+    '-t',
+    '8',
     '-vf',
     'fps=10,scale=960:-1:flags=lanczos,split[s0][s1];[s0]palettegen[p];[s1][p]paletteuse',
     '-loop',

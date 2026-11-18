@@ -1,9 +1,9 @@
-import { InkStage } from 'react-sumi-ink';
-import { useViewportStage } from '../lib/useViewportStage';
-import { Scene } from '../playground/Scene';
-import { Code, InstallPill } from './Code';
+import { useRef } from 'react';
+import { InkStage, type InkStageHandle } from 'react-sumi-ink';
+import { Code } from './Code';
 import { PresetDemo } from './PresetDemo';
 import { href } from './router';
+import { playStudioFlow } from './studioFlow';
 
 const FEATURES = [
   {
@@ -38,48 +38,64 @@ const FEATURES = [
   },
 ];
 
+function Seal() {
+  return (
+    <svg className="seal-svg" viewBox="0 0 64 64" width="44" height="44" aria-hidden>
+      <rect x="1.5" y="1.5" width="61" height="61" fill="#f4f0e8" stroke="#c23b2e" strokeWidth="3" />
+      <rect x="6" y="6" width="52" height="52" fill="none" stroke="#c23b2e" strokeWidth="1" />
+      <path
+        d="M16 18h32M16 32h24M20 46h28M32 14v36M22 24c6 4 14 4 20 0M24 40c5-3 12-3 18 1"
+        fill="none"
+        stroke="#c23b2e"
+        strokeWidth="1.7"
+      />
+    </svg>
+  );
+}
+
 export function Home() {
-  const { scale } = useViewportStage();
+  const stageRef = useRef<InkStageHandle>(null);
+  const played = useRef(false);
   return (
     <>
-      <section className="hero ink-hero">
-        <div className="hero-copy">
-          <span className="eyebrow">React · Rust WASM · WebGL2</span>
-          <h1>
-            Tinta sumi-e
-            <br />
-            ao redor do <em>DOM</em>.
-          </h1>
-          <p className="lead">
-            Pinte no papel washi. O fluido contorna titulos, botoes e cartoes marcados com data-ink, com presets prontos
-            para produto.
-          </p>
-          <div className="hero-actions">
-            <a className="btn primary" href={href('docs', 'quick-start')}>
-              Comecar
+      <section className="studio">
+        <InkStage
+          ref={stageRef}
+          className="studio-stage"
+          preset="sumi"
+          mode="paint"
+          onReady={(info) => {
+            if (played.current || !stageRef.current) return;
+            played.current = true;
+            const stage = stageRef.current;
+            playStudioFlow(stage, false);
+            const w = window as Window & {
+              __inkReplay?: (animate: boolean) => void;
+              __inkClear?: () => void;
+            };
+            w.__inkClear = () => stage.clear();
+            w.__inkReplay = (animate) => playStudioFlow(stage, animate);
+          }}
+        >
+          <div className="studio-ui">
+            <h1 className="studio-title" data-ink-glyphs data-ink="obstacle">
+              Ink that flows
+            </h1>
+            <a className="studio-cta" href={href('playground')} data-ink="obstacle">
+              Explore collection
+              <span aria-hidden> →</span>
             </a>
-            <a className="btn" href={href('playground')}>
-              Playground
-            </a>
+            <div className="studio-seal" data-ink="obstacle">
+              <Seal />
+            </div>
           </div>
-          <InstallPill />
-        </div>
-
-        <InkStage className="hero-stage" preset="sumi" mode="paint" style={{ minHeight: 460 }}>
-          <div className="hero-ink-content">
-            <h2 className="hero-serif" data-ink-glyphs data-ink="obstacle">
-              墨
-            </h2>
-            <p className="hero-cta" data-ink="obstacle">
-              Passe o mouse ou o dedo no papel
-            </p>
-            <a className="hero-cta-btn" href={href('playground')} data-ink="repel">
-              Abrir demo
-            </a>
+          <div className="studio-corners">
+            <span data-ink-glyphs data-ink="obstacle">
+              Handcrafted in Japan
+            </span>
+            <span className="studio-scroll">Scroll to discover ↓</span>
           </div>
-          <Scene heading={false} layoutScale={scale} />
         </InkStage>
-        <p className="hero-hint">Pinte no playground. Troque sumi, koi e smoke no painel.</p>
       </section>
 
       <section className="band">

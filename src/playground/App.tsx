@@ -144,13 +144,13 @@ export function Playground() {
         onReset={() => handleRef.current?.clear()}
         onDry={() => handleRef.current?.dry()}
         onSnapshot={() => {
-          const url = handleRef.current?.snapshot();
-          if (url) {
+          void handleRef.current?.snapshot().then((url) => {
+            if (!url) return;
             const a = document.createElement('a');
             a.href = url;
             a.download = 'sumi-ink.png';
             a.click();
-          }
+          });
         }}
       />
       <div className="dock" aria-label="Modo de tinta">

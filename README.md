@@ -10,13 +10,13 @@ Tinta sumi-e com simulacao fluida real para React. WebAssembly (Rust), WebGL2 e 
 ![Rust WASM](https://img.shields.io/badge/WASM-Rust-111)
 ![WebGL2](https://img.shields.io/badge/WebGL2-111)
 
-![Pinte no playground: tinta contorna cartoes e botoes](docs/assets/demo.gif)
+![Tinta sumi no hero, contornando o titulo](docs/assets/demo.gif)
 
 </div>
 
 ## Visao geral
 
-`react-sumi-ink` coloca uma camada de tinta interativa sobre seu React tree. O nucleo e um solver 2D estavel (advecao, difusao, projecao de pressao, confinamento de vorticidade) compilado em Rust para WASM. O desenho usa pigmento com secagem lenta, fibras de papel e granulacao no fragment shader.
+`react-sumi-ink` coloca uma camada de tinta interativa sobre seu React tree. A velocidade vive num grid grosso. O pigmento (nucleo nitido, fluxo e lavagem) vive num grid 2x a 4x maior, com pincel de cerdas, respingos e secagem. O fragment shader faz a borda rasgada, a granulacao e a fibra do washi.
 
 O diferencial: a tinta conhece o layout. Filhos de `<InkStage>` com `data-ink="obstacle" | "absorb" | "repel"` viram obstaculos no grid. A mascara atualiza com `ResizeObserver` e `MutationObserver`, sem rasterizar o DOM inteiro.
 

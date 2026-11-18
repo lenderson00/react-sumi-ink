@@ -34,7 +34,7 @@ export const inkHandleDocs: PropDoc[] = [
   { name: 'stroke(points, opts?)', type: 'void', default: 'n/a', description: 'Pontos normalizados 0..1 ao longo do traco.' },
   { name: 'clear()', type: 'void', default: 'n/a', description: 'Limpa densidade e velocidade.' },
   { name: 'dry()', type: 'void', default: 'n/a', description: 'Forca secagem total.' },
-  { name: 'snapshot()', type: 'string | null', default: 'n/a', description: 'PNG data URL do canvas de tinta.' },
+  { name: 'snapshot()', type: 'Promise<string | null>', default: 'n/a', description: 'PNG data URL do canvas de tinta.' },
 ];
 
 export const domInkDocs: PropDoc[] = [
