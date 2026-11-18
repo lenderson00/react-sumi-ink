@@ -12,7 +12,8 @@
     "preview": "vite preview",
     "typecheck": "tsc -b && npm run typecheck -w react-sumi-ink",
     "test:rust": "cargo test --manifest-path crates/sumi-ink-sim/Cargo.toml",
-    "clippy": "cargo clippy --manifest-path crates/sumi-ink-sim/Cargo.toml -- -D warnings"
+    "clippy": "cargo clippy --manifest-path crates/sumi-ink-sim/Cargo.toml -- -D warnings",
+    "test:visual": "node scripts/ink-visual-regression.mjs"
   },
   "dependencies": {
     "react": "^19.0.0",
@@ -24,6 +25,7 @@
     "@types/react-dom": "^19.0.0",
     "@vitejs/plugin-react": "^4.3.4",
     "playwright": "^1.65.1",
+    "wait-on": "^8.0.1",
     "typescript": "^5.7.2",
     "vite": "^6.0.3"
   },

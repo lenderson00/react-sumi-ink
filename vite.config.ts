@@ -1,10 +1,11 @@
 import { resolve } from 'node:path';
 import { defineConfig } from 'vite';
 import react from '@vitejs/plugin-react';
+import { inkWasmUrlPlugin } from './packages/react-sumi-ink/viteWasmUrl';
 
 export default defineConfig({
   base: process.env.BASE_PATH ?? '/',
-  plugins: [react()],
+  plugins: [react(), inkWasmUrlPlugin()],
   resolve: {
     alias: {
       'react-sumi-ink': resolve(import.meta.dirname, 'packages/react-sumi-ink/src/index.ts'),
@@ -12,6 +13,7 @@ export default defineConfig({
     },
   },
   server: { port: 5198 },
+  worker: { format: 'es' },
   assetsInclude: ['**/*.wasm'],
   optimizeDeps: {
   include: ['react', 'react-dom', 'react/jsx-runtime'],

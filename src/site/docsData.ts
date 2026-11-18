@@ -42,4 +42,5 @@ export const domInkDocs: PropDoc[] = [
   { name: 'data-ink="absorb"', type: 'HTML attr', default: 'n/a', description: 'Absorve e reduz densidade local.' },
   { name: 'data-ink="repel"', type: 'HTML attr', default: 'n/a', description: 'Empurra o campo de velocidade.' },
   { name: 'data-ink="ignore"', type: 'HTML attr', default: 'n/a', description: 'Nao entra na mascara (padrao).' },
+  { name: 'data-ink-glyphs', type: 'HTML attr', default: 'n/a', description: 'Obstaculo por forma do glifo (Canvas 2D), combine com data-ink.' },
 ];

@@ -23,3 +23,11 @@ jobs:
       - run: npm run clippy
       - run: npm run typecheck
       - run: npm run build
+      - run: npx playwright install --with-deps chromium
+      - name: Visual regression
+        run: |
+          npm run preview -- --host 127.0.0.1 --port 4178 &
+          echo $! > /tmp/preview.pid
+          npx wait-on http://127.0.0.1:4178 -t 120000
+          INK_TEST_URL=http://127.0.0.1:4178/#/playground npm run test:visual
+          kill "$(cat /tmp/preview.pid)" || true

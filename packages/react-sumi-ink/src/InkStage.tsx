@@ -12,9 +12,18 @@ import {
 } from 'react';
 import { collectInkRects, observeInkDom, rasterizeObstacleMask } from './dom/obstacleMask';
 import { defaultInkConfig, inkPresets, type InkConfig, type InkPresetName } from './presets';
-import { qualityToGrid, supportsInkRuntime, type InkMode, type InkPoint, type InkQuality, type InkRgb, type InkRuntimeError, type InkSplashOptions } from './shared';
+import {
+  qualityToGrid,
+  supportsInkRuntime,
+  type InkMode,
+  type InkPoint,
+  type InkQuality,
+  type InkRgb,
+  type InkRuntimeError,
+  type InkSplashOptions,
+} from './shared';
 import { InkRenderer } from './webgl/renderer';
-import { createInkEngine, type InkEngine } from './worker/inkEngine';
+import { createInkRuntime, type InkSimBridge } from './worker/inkRuntime';
 
 export interface InkStageHandle {
   splash: (x: number, y: number, opts?: InkSplashOptions) => void;
@@ -52,6 +61,7 @@ export interface InkStageProps {
   paper?: InkConfig['paper'];
   onError?: (err: InkRuntimeError) => void;
   onFrame?: (fps: number) => void;
+  onReady?: (info: { worker: boolean }) => void;
 }
 
 const mergeConfig = (
@@ -71,6 +81,9 @@ const mergeConfig = (
   };
 };
 
+const cellRadius = (brushPx: number, stageW: number, stageH: number, gw: number, gh: number) =>
+  Math.max(2.5, (brushPx / Math.max(stageW, stageH)) * Math.max(gw, gh) * 1.15);
+
 export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkStage(props, ref) {
   const {
     children,
@@ -82,41 +95,59 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
     palette,
     onError,
     onFrame,
+    onReady,
   } = props;
 
   const cfg = useMemo(() => mergeConfig(props.preset, props.config, props), [props]);
 
   const rootRef = useRef<HTMLDivElement>(null);
   const layerRef = useRef<HTMLCanvasElement>(null);
-  const engineRef = useRef<InkEngine | null>(null);
+  const bridgeRef = useRef<InkSimBridge | null>(null);
   const rendererRef = useRef<InkRenderer | null>(null);
+  const stagePxRef = useRef({ w: 1, h: 1 });
   const rafRef = useRef(0);
   const lastRef = useRef(0);
   const pointerRef = useRef({ x: 0, y: 0, vx: 0, vy: 0, t: 0 });
   const fpsRef = useRef({ frames: 0, last: 0 });
   const reducedMotion = useRef(false);
+  const onErrorRef = useRef(onError);
+  const onFrameRef = useRef(onFrame);
+  const onReadyRef = useRef(onReady);
   const [ready, setReady] = useState(false);
   const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    onErrorRef.current = onError;
+    onFrameRef.current = onFrame;
+    onReadyRef.current = onReady;
+  }, [onError, onFrame, onReady]);
 
   const runtime = supportsInkRuntime();
 
   const splatNorm = useCallback(
     (nx: number, ny: number, opts: InkSplashOptions = {}, speed = 0) => {
-      const eng = engineRef.current;
-      if (!eng) return;
+      const eng = bridgeRef.current;
+      const root = rootRef.current;
+      if (!eng || !root) return;
+      const rect = root.getBoundingClientRect();
+      stagePxRef.current = { w: rect.width, h: rect.height };
       const amount = opts.amount ?? cfg.amount;
-      const radius = (opts.radius ?? cfg.brushSize) / Math.max(eng.gw, eng.gh);
+      const br = opts.radius ?? cfg.brushSize;
+      const radius = cellRadius(br, rect.width, rect.height, eng.gw, eng.gh);
       const color = opts.color ?? cfg.inkColor;
       const vx = opts.vx ?? speed;
       const vy = opts.vy ?? 0;
       eng.splat(nx, ny, radius, amount, color.r, color.g, color.b, vx, vy);
-      if (palette?.length && Math.random() < 0.08) {
-        const accent = palette[Math.floor(Math.random() * palette.length)];
-        eng.splat(nx, ny, radius * 0.7, amount * 0.35, accent.r, accent.g, accent.b, vx * 0.3, vy * 0.3);
+      if (speed > 2.5) {
+        eng.splat(nx, ny, radius * 0.55, amount * 0.35, color.r, color.g, color.b, vx * 1.2, vy * 1.2);
       }
-      if (cfg.accent && Math.random() < 0.12) {
+      if (cfg.accent && Math.random() < 0.14) {
         const a = cfg.accent;
-        eng.splat(nx, ny, radius * 0.55, amount * 0.4, a.r, a.g, a.b, vx * 0.2, vy * 0.2);
+        eng.splat(nx, ny, radius * 0.65, amount * 0.55, a.r, a.g, a.b, vx * 0.15, vy * 0.15);
+      }
+      if (palette?.length && Math.random() < 0.1) {
+        const accent = palette[Math.floor(Math.random() * palette.length)];
+        eng.splat(nx, ny, radius * 0.5, amount * 0.4, accent.r, accent.g, accent.b, 0, 0);
       }
     },
     [cfg, palette],
@@ -134,11 +165,11 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
         for (let i = 1; i < points.length; i++) {
           const a = points[i - 1];
           const b = points[i];
-          splatNorm(b.x, b.y, opts, Math.hypot(b.x - a.x, b.y - a.y) * 4);
+          splatNorm(b.x, b.y, opts, Math.hypot(b.x - a.x, b.y - a.y) * 5);
         }
       },
-      clear: () => engineRef.current?.sim.clear(),
-      dry: () => engineRef.current?.sim.dry_all(),
+      clear: () => bridgeRef.current?.clear(),
+      dry: () => bridgeRef.current?.dryAll(),
       snapshot: () => rendererRef.current?.snapshot() ?? null,
     }),
     [splatNorm],
@@ -148,18 +179,18 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
 
   const rebuildMask = useCallback(() => {
     const root = rootRef.current;
-    const eng = engineRef.current;
+    const eng = bridgeRef.current;
     if (!root || !eng) return;
     const rect = root.getBoundingClientRect();
     const rects = collectInkRects(root);
-    const mask = rasterizeObstacleMask(eng.gw, eng.gh, rect.width, rect.height, rects);
+    const mask = rasterizeObstacleMask(root, eng.gw, eng.gh, rect.width, rect.height, rects);
     eng.setMask(mask);
   }, []);
 
   useEffect(() => {
     if (!runtime.webgl2 || !runtime.wasm) {
       setFailed(true);
-      onError?.({
+      onErrorRef.current?.({
         code: !runtime.webgl2 ? 'no-webgl2' : 'no-wasm',
         message: 'InkStage requires WebGL2 and WebAssembly.',
       });
@@ -177,53 +208,59 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
         const rect = root.getBoundingClientRect();
         const dpr = Math.min(window.devicePixelRatio || 1, 2);
         const grid = qualityToGrid(quality, rect.width, rect.height);
-        const eng = await createInkEngine(grid.w, grid.h);
+        const bridge = await createInkRuntime(grid.w, grid.h, true);
         if (disposed) {
-          eng.dispose();
+          bridge.dispose();
           return;
         }
-        eng.sim.set_params(cfg.viscosity, cfg.diffusion, cfg.drying, cfg.vorticity);
-        engineRef.current = eng;
+        bridge.setParams(cfg.viscosity, cfg.diffusion, cfg.drying, cfg.vorticity);
+        bridgeRef.current = bridge;
         const renderer = new InkRenderer(canvas);
         renderer.resize(rect.width, rect.height, dpr);
         rendererRef.current = renderer;
         rebuildMask();
+        splatNorm(0.48, 0.52, { amount: 0.85, radius: cfg.brushSize * 2.2 });
+        const bootRgba = await bridge.step(1 / 60);
+        renderer.uploadRGBA(bootRgba, bridge.gw, bridge.gh);
+        renderer.draw(cfg.paper, 0.75, 0);
         setReady(true);
+        onReadyRef.current?.({ worker: bridge.usedWorker });
         lastRef.current = performance.now();
+
+        let simBusy = false;
         const tick = (now: number) => {
           if (disposed) return;
           const dt = Math.min(0.05, (now - lastRef.current) / 1000);
           lastRef.current = now;
           const effectiveMode = reducedMotion.current ? 'static' : mode;
-          if (effectiveMode !== 'static') {
-            eng.step(dt);
-            renderer.uploadRGBA(eng.rgba, eng.gw, eng.gh);
-            renderer.draw(cfg.paper, effectiveMode === 'ambient' ? 0.25 : 0.65, now * 0.001);
-          } else {
-            renderer.draw(cfg.paper, 0.1, now * 0.001);
+          const runSim = effectiveMode !== 'static' && !simBusy;
+          if (runSim) {
+            simBusy = true;
+            void bridge.step(dt).then((rgba) => {
+              simBusy = false;
+              if (disposed) return;
+              renderer.uploadRGBA(rgba, bridge.gw, bridge.gh);
+              renderer.draw(cfg.paper, effectiveMode === 'ambient' ? 0.35 : 0.75, now * 0.001);
+            });
+          } else if (!simBusy) {
+            renderer.draw(cfg.paper, effectiveMode === 'ambient' ? 0.35 : 0.12, now * 0.001);
           }
           fpsRef.current.frames += 1;
           if (now - fpsRef.current.last > 500) {
             const fps = (fpsRef.current.frames * 1000) / (now - fpsRef.current.last);
-            onFrame?.(fps);
+            onFrameRef.current?.(fps);
             fpsRef.current.frames = 0;
             fpsRef.current.last = now;
-            if (quality === 'auto') {
-              const next = qualityToGrid(quality, rect.width, rect.height, fps);
-              if (next.w !== eng.gw && fps < 48) {
-                /* keep single grid per session for stability */
-              }
-            }
           }
-          if (effectiveMode === 'ambient' && !reducedMotion.current) {
-            splatNorm(Math.random(), Math.random(), { amount: 0.08, radius: cfg.brushSize * 0.4 });
+          if (effectiveMode === 'ambient' && !reducedMotion.current && Math.random() < 0.06) {
+            splatNorm(Math.random(), Math.random(), { amount: 0.12, radius: cfg.brushSize * 0.45 });
           }
           rafRef.current = requestAnimationFrame(tick);
         };
         rafRef.current = requestAnimationFrame(tick);
       } catch (e) {
         setFailed(true);
-        onError?.({ code: 'no-wasm', message: e instanceof Error ? e.message : 'init failed' });
+        onErrorRef.current?.({ code: 'worker-failed', message: e instanceof Error ? e.message : 'init failed' });
       }
     };
     void boot();
@@ -245,21 +282,33 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
       cancelAnimationFrame(rafRef.current);
       unobserveDom();
       ro.disconnect();
-      engineRef.current?.dispose();
-      engineRef.current = null;
+      bridgeRef.current?.dispose();
+      bridgeRef.current = null;
       rendererRef.current = null;
     };
-  }, [cfg.paper, cfg.viscosity, cfg.diffusion, cfg.drying, cfg.vorticity, mode, quality, onError, onFrame, rebuildMask, runtime.wasm, runtime.webgl2, splatNorm, cfg.brushSize]);
+  }, [
+    cfg.paper,
+    cfg.viscosity,
+    cfg.diffusion,
+    cfg.drying,
+    cfg.vorticity,
+  mode,
+    quality,
+    rebuildMask,
+    runtime.wasm,
+    runtime.webgl2,
+    cfg.brushSize,
+    cfg.amount,
+  ]);
 
   useEffect(() => {
-    engineRef.current?.sim.set_params(cfg.viscosity, cfg.diffusion, cfg.drying, cfg.vorticity);
+    bridgeRef.current?.setParams(cfg.viscosity, cfg.diffusion, cfg.drying, cfg.vorticity);
   }, [cfg]);
 
   const onPointer = (e: React.PointerEvent) => {
     if (!interactive || failed || !ready) return;
     const root = rootRef.current;
-    const eng = engineRef.current;
-    if (!root || !eng) return;
+    if (!root) return;
     const rect = root.getBoundingClientRect();
     const nx = (e.clientX - rect.left) / rect.width;
     const ny = (e.clientY - rect.top) / rect.height;
@@ -270,7 +319,8 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
     pointerRef.current = { x: e.clientX, y: e.clientY, vx, vy, t: now };
     if (mode === 'paint' || mode === 'trail') {
       const speed = Math.hypot(vx, vy);
-      splatNorm(nx, ny, { radius: cfg.brushSize * (1 + Math.min(speed * 0.02, 0.8)) }, speed * 0.003);
+      const widen = 1 + Math.min(speed * 0.015, 1.2);
+      splatNorm(nx, ny, { radius: cfg.brushSize * widen, amount: cfg.amount * (1 + speed * 0.002) }, speed * 0.004);
     }
   };
 
@@ -280,24 +330,17 @@ export const InkStage = forwardRef<InkStageHandle, InkStageProps>(function InkSt
         ref={rootRef}
         className={className}
         style={{ position: 'relative', overflow: 'hidden', ...style }}
-        onPointerDown={onPointer}
-        onPointerMove={(e) => {
+        onPointerDownCapture={onPointer}
+        onPointerMoveCapture={(e) => {
           if (e.buttons > 0) onPointer(e);
         }}
       >
         <canvas
           ref={layerRef}
+          className="ink-stage-layer"
           aria-hidden
-          style={{
-            position: 'absolute',
-            inset: 0,
-            width: '100%',
-            height: '100%',
-            pointerEvents: interactive ? 'none' : 'auto',
-            zIndex: 2,
-          }}
         />
-        <div style={{ position: 'relative', zIndex: 3, pointerEvents: 'auto' }}>{children}</div>
+        <div className="ink-stage-paper">{children}</div>
       </div>
     </InkContext.Provider>
   );

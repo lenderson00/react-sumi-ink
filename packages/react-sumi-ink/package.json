@@ -46,7 +46,7 @@
     "LICENSE"
   ],
   "scripts": {
-    "build:wasm": "wasm-pack build ../../crates/sumi-ink-sim --target web --out-dir wasm/pkg",
+    "build:wasm": "wasm-pack build ../../crates/sumi-ink-sim --target web --out-dir ../../packages/react-sumi-ink/wasm/pkg",
     "build": "npm run build:wasm && vite build && tsc -p tsconfig.build.json",
     "typecheck": "tsc -p tsconfig.build.json --noEmit",
     "prepublishOnly": "npm run build"

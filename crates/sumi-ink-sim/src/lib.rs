@@ -159,9 +159,10 @@ impl InkSim {
                 }
                 let damp = 1.0 - self.repel[idx] * 0.85;
                 self.d[idx] += amount * k * damp;
-                self.dr[idx] += r * k * damp;
-                self.dg[idx] += g * k * damp;
-                self.db[idx] += b * k * damp;
+                let add = amount * k * damp;
+                self.dr[idx] = (self.dr[idx] + r * add * 4.0).min(12.0);
+                self.dg[idx] = (self.dg[idx] + g * add * 4.0).min(12.0);
+                self.db[idx] = (self.db[idx] + b * add * 4.0).min(12.0);
                 self.u[idx] += vx * vel_scale * k;
                 self.v[idx] += vy * vel_scale * k;
                 if self.absorb[idx] > 0.3 {
@@ -217,14 +218,18 @@ impl InkSim {
             for i in 0..self.w {
                 let gi = self.idx(i + 1, j + 1);
                 let si = (j * self.w + i) * 4;
-                let dens = self.d[gi].clamp(0.0, 8.0);
+                let dens = self.d[gi].clamp(0.0, 16.0);
                 let dry = self.dry[gi];
-                let edge = self.edge_darken(gi);
-                let k = dens * (1.0 - dry * 0.55) + edge;
-                out[si] = (self.dr[gi] * k).clamp(0.0, 1.0);
-                out[si + 1] = (self.dg[gi] * k).clamp(0.0, 1.0);
-                out[si + 2] = (self.db[gi] * k).clamp(0.0, 1.0);
-                out[si + 3] = (k * 0.35 + dry * 0.4).clamp(0.0, 1.0);
+                let edge = self.edge_darken(gi) * 1.8;
+                let ink_amt = (dens * 0.38 + edge).min(1.35);
+                let fade = 1.0 - dry * 0.65;
+                let pr = (self.dr[gi] / 3.5).clamp(0.02, 1.0);
+                let pg = (self.dg[gi] / 3.5).clamp(0.02, 1.0);
+                let pb = (self.db[gi] / 3.5).clamp(0.02, 1.0);
+                out[si] = pr;
+                out[si + 1] = pg;
+                out[si + 2] = pb;
+                out[si + 3] = (ink_amt * fade).clamp(0.0, 1.0);
             }
         }
     }
@@ -481,8 +486,8 @@ impl InkSim {
                 }
                 let edge = self.laplacian_d(gi).abs();
                 self.dry[gi] = (self.dry[gi] + rate * (1.0 + edge * 2.0)).min(1.0);
-                let fade = 1.0 - rate * (0.3 + self.dry[gi] * 0.5);
-                self.d[gi] *= fade.max(0.92);
+                let fade = 1.0 - rate * (0.04 + self.dry[gi] * 0.12);
+                self.d[gi] *= fade.max(0.997);
             }
         }
     }

@@ -83,6 +83,7 @@ export function Playground() {
   const [interactive, setInteractive] = useState(saved.interactive);
   const [fps, setFps] = useState(0);
   const [err, setErr] = useState<string | null>(null);
+  const [worker, setWorker] = useState(false);
   const handleRef = useRef<InkStageHandle>(null);
   const { scale } = useViewportStage();
 
@@ -122,6 +123,7 @@ export function Playground() {
         quality={quality}
         interactive={interactive}
         onFrame={setFps}
+        onReady={(i) => setWorker(i.worker)}
         onError={(e) => setErr(e.message)}
       >
         <Scene layoutScale={scale} />
@@ -136,6 +138,7 @@ export function Playground() {
         interactive={interactive}
         onInteractive={setInteractive}
         fps={fps}
+        worker={worker}
         error={err}
         code={code}
         onReset={() => handleRef.current?.clear()}
