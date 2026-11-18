@@ -1,0 +1,19 @@
+{
+  "name": "sumi-ink-sim",
+  "collaborators": [
+    "Lenderson Macedo"
+  ],
+  "description": "2D stable-fluids ink simulation for react-sumi-ink (WebAssembly)",
+  "version": "0.1.0",
+  "license": "MIT",
+  "files": [
+    "sumi_ink_sim_bg.wasm",
+    "sumi_ink_sim.js",
+    "sumi_ink_sim.d.ts"
+  ],
+  "module": "sumi_ink_sim.js",
+  "types": "sumi_ink_sim.d.ts",
+  "sideEffects": [
+    "./snippets/*"
+  ]
+}

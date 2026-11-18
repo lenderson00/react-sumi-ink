@@ -1,0 +1,18 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM", "DOM.Iterable"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "strict": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "isolatedModules": true,
+    "paths": {
+      "react-sumi-ink": ["./packages/react-sumi-ink/src/index.ts"],
+      "sumi-ink-sim": ["./packages/react-sumi-ink/wasm/pkg/sumi_ink_sim.js"]
+    }
+  },
+  "include": ["src", "packages/react-sumi-ink/src"]
+}

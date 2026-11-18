@@ -1,0 +1,125 @@
+import { parseInkRole, type InkElementRole } from '../shared';
+
+export interface InkObstacleRect {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+  radius: number;
+  role: InkElementRole;
+}
+
+const roleChannel = (role: InkElementRole): [number, number, number] => {
+  if (role === 'obstacle') return [1, 0, 0];
+  if (role === 'absorb') return [0, 1, 0];
+  if (role === 'repel') return [0, 0, 1];
+  return [0, 0, 0];
+};
+
+const borderRadiusPx = (el: Element, stage: DOMRect): number => {
+  const cs = getComputedStyle(el);
+  const br = parseFloat(cs.borderTopLeftRadius) || 0;
+  return Math.min(br, Math.min(stage.width, stage.height) * 0.5);
+};
+
+export const collectInkRects = (root: HTMLElement): InkObstacleRect[] => {
+  const stage = root.getBoundingClientRect();
+  const nodes = root.querySelectorAll<HTMLElement>('[data-ink]');
+  const out: InkObstacleRect[] = [];
+  nodes.forEach((el) => {
+    const role = parseInkRole(el);
+    if (role === 'ignore') return;
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return;
+    out.push({
+      left: r.left - stage.left,
+      top: r.top - stage.top,
+      width: r.width,
+      height: r.height,
+      radius: borderRadiusPx(el, stage),
+      role,
+    });
+  });
+  return out;
+};
+
+export const rasterizeObstacleMask = (
+  gw: number,
+  gh: number,
+  stageW: number,
+  stageH: number,
+  rects: InkObstacleRect[],
+): Float32Array => {
+  const n = gw * gh;
+  const mask = new Float32Array(n * 3);
+  const sx = gw / Math.max(1, stageW);
+  const sy = gh / Math.max(1, stageH);
+  const insideRoundRect = (x: number, y: number, rect: InkObstacleRect): boolean => {
+    const rx = rect.left;
+    const ry = rect.top;
+    const rw = rect.width;
+    const rh = rect.height;
+    const rad = Math.min(rect.radius, rw * 0.5, rh * 0.5);
+    if (x < rx || y < ry || x > rx + rw || y > ry + rh) return false;
+    if (rad <= 0) return true;
+    const cx = rx + rad;
+    const cy = ry + rad;
+    const cx2 = rx + rw - rad;
+    const cy2 = ry + rh - rad;
+    if (x >= cx && x <= cx2 && y >= cy && y <= cy2) return true;
+    if (y >= cy && y <= cy2) {
+      if (x < cx) {
+        const dy = y < cy ? y - cy : y > cy2 ? y - cy2 : 0;
+        return (x - cx) ** 2 + dy ** 2 <= rad ** 2;
+      }
+      if (x > cx2) {
+        const dy = y < cy ? y - cy : y > cy2 ? y - cy2 : 0;
+        return (x - cx2) ** 2 + dy ** 2 <= rad ** 2;
+      }
+    }
+    if (x < cx && y < cy) return (x - cx) ** 2 + (y - cy) ** 2 <= rad ** 2;
+    if (x > cx2 && y < cy) return (x - cx2) ** 2 + (y - cy) ** 2 <= rad ** 2;
+    if (x < cx && y > cy2) return (x - cx) ** 2 + (y - cy2) ** 2 <= rad ** 2;
+    if (x > cx2 && y > cy2) return (x - cx2) ** 2 + (y - cy2) ** 2 <= rad ** 2;
+    return true;
+  };
+
+  for (let j = 0; j < gh; j++) {
+    for (let i = 0; i < gw; i++) {
+      const x = (i + 0.5) / sx;
+      const y = (j + 0.5) / sy;
+      let ch = roleChannel('ignore');
+      for (const rect of rects) {
+        if (insideRoundRect(x, y, rect)) {
+          ch = roleChannel(rect.role);
+          break;
+        }
+      }
+      const idx = j * gw + i;
+      mask[idx] = ch[0];
+      mask[n + idx] = ch[1];
+      mask[2 * n + idx] = ch[2];
+    }
+  }
+  return mask;
+};
+
+export const observeInkDom = (
+  root: HTMLElement,
+  onChange: () => void,
+): (() => void) => {
+  const ro = new ResizeObserver(() => onChange());
+  ro.observe(root);
+  root.querySelectorAll<HTMLElement>('[data-ink]').forEach((el) => ro.observe(el));
+  const mo = new MutationObserver(() => {
+    ro.disconnect();
+    ro.observe(root);
+    root.querySelectorAll<HTMLElement>('[data-ink]').forEach((el) => ro.observe(el));
+    onChange();
+  });
+  mo.observe(root, { childList: true, subtree: true, attributes: true, attributeFilter: ['data-ink', 'class', 'style'] });
+  return () => {
+    ro.disconnect();
+    mo.disconnect();
+  };
+};
