@@ -1,5 +1,10 @@
 /* @ts-self-types="./sumi_ink_sim.d.ts" */
 
+/**
+ * Dual-resolution sumi sim.
+ * Velocity lives on a coarse grid. Pigment (crisp mark, flowing ink, wash, wetness)
+ * lives on a 2x to 4x grid and is advected with MacCormack so edges stay sharp.
+ */
 export class InkSim {
     __destroy_into_raw() {
         const ptr = this.__wbg_ptr;
@@ -22,29 +27,8 @@ export class InkSim {
         var len0 = WASM_VECTOR_LEN;
         wasm.inksim_copy_density_rgba(this.__wbg_ptr, ptr0, len0, out);
     }
-    /**
-     * @returns {number}
-     */
-    density_len() {
-        const ret = wasm.inksim_density_len(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
-     * @returns {number}
-     */
-    density_ptr() {
-        const ret = wasm.inksim_density_ptr(this.__wbg_ptr);
-        return ret >>> 0;
-    }
     dry_all() {
         wasm.inksim_dry_all(this.__wbg_ptr);
-    }
-    /**
-     * @returns {number}
-     */
-    dry_ptr() {
-        const ret = wasm.inksim_dry_ptr(this.__wbg_ptr);
-        return ret >>> 0;
     }
     /**
      * @returns {number}
@@ -54,23 +38,18 @@ export class InkSim {
         return ret >>> 0;
     }
     /**
-     * @param {number} width
-     * @param {number} height
+     * @param {number} vw
+     * @param {number} vh
+     * @param {number} scale
      */
-    constructor(width, height) {
-        const ret = wasm.inksim_new(width, height);
+    constructor(vw, vh, scale) {
+        const ret = wasm.inksim_new(vw, vh, scale);
         this.__wbg_ptr = ret;
         InkSimFinalization.register(this, this.__wbg_ptr, this);
         return this;
     }
     /**
-     * @returns {number}
-     */
-    pigment_ptr() {
-        const ret = wasm.inksim_pigment_ptr(this.__wbg_ptr);
-        return ret >>> 0;
-    }
-    /**
+     * Packed mask, length `width * height * 3`: obstacle, absorb, repel.
      * @param {Float32Array | number[]} data
      */
     set_obstacle_mask(data) {
@@ -88,24 +67,41 @@ export class InkSim {
         wasm.inksim_set_params(this.__wbg_ptr, viscosity, diffusion, drying, vorticity);
     }
     /**
+     * Legacy round deposit. Radius is in pigment pixels. Prefer `stroke_segment`.
      * @param {number} x
      * @param {number} y
      * @param {number} radius
      * @param {number} amount
-     * @param {number} r
-     * @param {number} g
-     * @param {number} b
+     * @param {number} _r
+     * @param {number} _g
+     * @param {number} _b
      * @param {number} vx
      * @param {number} vy
      */
-    splat(x, y, radius, amount, r, g, b, vx, vy) {
-        wasm.inksim_splat(this.__wbg_ptr, x, y, radius, amount, r, g, b, vx, vy);
+    splat(x, y, radius, amount, _r, _g, _b, vx, vy) {
+        wasm.inksim_splat(this.__wbg_ptr, x, y, radius, amount, _r, _g, _b, vx, vy);
     }
     /**
      * @param {number} dt
      */
     step(dt) {
         wasm.inksim_step(this.__wbg_ptr, dt);
+    }
+    /**
+     * One polyline segment. Coordinates are normalized 0..1.
+     * `radius` is pigment pixels. `speed` and `wash_bias` are 0..1.
+     * @param {number} x0
+     * @param {number} y0
+     * @param {number} x1
+     * @param {number} y1
+     * @param {number} radius
+     * @param {number} pressure
+     * @param {number} load
+     * @param {number} speed
+     * @param {number} wash_bias
+     */
+    stroke_segment(x0, y0, x1, y1, radius, pressure, load, speed, wash_bias) {
+        wasm.inksim_stroke_segment(this.__wbg_ptr, x0, y0, x1, y1, radius, pressure, load, speed, wash_bias);
     }
     /**
      * @returns {number}

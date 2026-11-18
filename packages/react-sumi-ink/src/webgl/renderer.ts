@@ -10,31 +10,33 @@ const compile = (gl: WebGL2RenderingContext, type: number, src: string) => {
   return sh;
 };
 
+export type PaperName = 'washi' | 'rice' | 'cloud';
+
 export class InkRenderer {
   private gl: WebGL2RenderingContext;
   private prog: WebGLProgram;
   private tex: WebGLTexture;
+  private maskTex: WebGLTexture;
   private u8 = new Uint8Array(0);
+  private maskU8 = new Uint8Array(1);
   private locInk: WebGLUniformLocation | null;
+  private locMask: WebGLUniformLocation | null;
   private locPaperA: WebGLUniformLocation | null;
   private locPaperB: WebGLUniformLocation | null;
   private locGrain: WebGLUniformLocation | null;
-  private locWet: WebGLUniformLocation | null;
   private locTime: WebGLUniformLocation | null;
   private locTexel: WebGLUniformLocation | null;
-  gw = 0;
-  gh = 0;
+  gw = 1;
+  gh = 1;
 
   constructor(canvas: HTMLCanvasElement | OffscreenCanvas) {
     const gl = canvas.getContext('webgl2', {
-      alpha: true,
+      alpha: false,
       premultipliedAlpha: false,
       antialias: false,
       preserveDrawingBuffer: true,
     });
     if (!gl) throw new Error('WebGL2 unavailable');
-    const ext = gl.getExtension('EXT_color_buffer_float');
-    if (ext) gl.getExtension('OES_texture_float_linear');
     this.gl = gl;
     const vs = compile(gl, gl.VERTEX_SHADER, VERT);
     const fs = compile(gl, gl.FRAGMENT_SHADER, FRAG);
@@ -47,10 +49,10 @@ export class InkRenderer {
     }
     this.prog = p;
     this.locInk = gl.getUniformLocation(p, 'uInk');
+    this.locMask = gl.getUniformLocation(p, 'uMask');
     this.locPaperA = gl.getUniformLocation(p, 'uPaperA');
     this.locPaperB = gl.getUniformLocation(p, 'uPaperB');
     this.locGrain = gl.getUniformLocation(p, 'uGrain');
-    this.locWet = gl.getUniformLocation(p, 'uWet');
     this.locTime = gl.getUniformLocation(p, 'uTime');
     this.locTexel = gl.getUniformLocation(p, 'uTexel');
     this.tex = gl.createTexture()!;
@@ -59,8 +61,14 @@ export class InkRenderer {
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array([0, 0, 0, 255]));
+    this.maskTex = gl.createTexture()!;
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, 1, 1, 0, gl.RED, gl.UNSIGNED_BYTE, new Uint8Array([0]));
   }
 
   resize(w: number, h: number, dpr: number) {
@@ -85,25 +93,44 @@ export class InkRenderer {
     gl.activeTexture(gl.TEXTURE0);
     gl.bindTexture(gl.TEXTURE_2D, this.tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gw, gh, 0, gl.RGBA, gl.UNSIGNED_BYTE, this.u8);
   }
 
-  draw(paper: 'washi' | 'rice' | 'cloud', wet: number, time: number) {
+  uploadMask(mask: Float32Array, gw: number, gh: number) {
+    const n = gw * gh;
+    if (mask.length < n) return;
+    if (this.maskU8.length !== n) this.maskU8 = new Uint8Array(n);
+    for (let i = 0; i < n; i++) this.maskU8[i] = mask[i] > 0.35 ? 255 : 0;
+    const gl = this.gl;
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.R8, gw, gh, 0, gl.RED, gl.UNSIGNED_BYTE, this.maskU8);
+  }
+
+  draw(paper: PaperName, _wet: number, time: number) {
     const gl = this.gl;
     const papers = {
-      washi: { a: [0.94, 0.91, 0.84], b: [0.9, 0.86, 0.78] },
-      rice: { a: [0.97, 0.95, 0.92], b: [0.94, 0.91, 0.87] },
-      cloud: { a: [0.91, 0.92, 0.95], b: [0.86, 0.88, 0.93] },
+      washi: { a: [0.965, 0.949, 0.918], b: [0.918, 0.894, 0.848] },
+      rice: { a: [0.98, 0.968, 0.945], b: [0.94, 0.92, 0.88] },
+      cloud: { a: [0.9, 0.91, 0.94], b: [0.84, 0.86, 0.91] },
     } as const;
     const p = papers[paper];
+    gl.disable(gl.BLEND);
     gl.clearColor(p.a[0], p.a[1], p.a[2], 1);
     gl.clear(gl.COLOR_BUFFER_BIT);
     gl.useProgram(this.prog);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, this.tex);
+    gl.activeTexture(gl.TEXTURE1);
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
     gl.uniform1i(this.locInk, 0);
+    gl.uniform1i(this.locMask, 1);
     gl.uniform3fv(this.locPaperA, p.a);
     gl.uniform3fv(this.locPaperB, p.b);
-    gl.uniform1f(this.locGrain, paper === 'washi' ? 0.85 : 0.45);
-    gl.uniform1f(this.locWet, wet);
+    gl.uniform1f(this.locGrain, paper === 'washi' ? 1.0 : 0.55);
     gl.uniform1f(this.locTime, time);
     gl.uniform2f(this.locTexel, 1 / Math.max(1, this.gw), 1 / Math.max(1, this.gh));
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);

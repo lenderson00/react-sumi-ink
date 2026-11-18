@@ -12,6 +12,12 @@ const NAV: [Route, string][] = [
   ['playground', 'Playground'],
 ];
 
+const STUDIO_NAV: { href: string; label: string; external?: boolean }[] = [
+  { href: '#/docs', label: 'About' },
+  { href: '#/playground', label: 'Collection' },
+  { href: 'https://github.com/lenderson00/react-sumi-ink', label: 'Journal', external: true },
+];
+
 const REPO = 'https://github.com/lenderson00/react-sumi-ink';
 
 function Header({ route }: { route: Route }) {
@@ -28,9 +34,11 @@ function Header({ route }: { route: Route }) {
     return () => mq.removeEventListener('change', apply);
   }, [route]);
 
-  const overlay = route === 'playground';
+  const overlay = route === 'playground' || route === 'home';
+  const studio = route === 'home';
   const headerClass = [
     'site-header',
+    studio ? 'studio-nav' : '',
     overlay ? 'overlay' : '',
     scrollHide.hidden ? 'is-hidden' : '',
     scrollHide.compact ? 'is-compact' : '',
@@ -43,20 +51,47 @@ function Header({ route }: { route: Route }) {
     <>
       <header className={headerClass}>
         <a className="brand" href={href('home')}>
-          <span className="brand-dot" aria-hidden /> react-sumi-ink
+          {studio ? (
+            'Sumi Ink Studio'
+          ) : (
+            <>
+              <span className="brand-dot" aria-hidden /> react-sumi-ink
+            </>
+          )}
         </a>
         <nav className="site-nav" aria-label="Main">
-          {NAV.map(([r, label]) => (
-            <a key={r} href={href(r)} aria-current={route === r ? 'page' : undefined} className={route === r ? 'on' : ''}>
-              {label}
-            </a>
-          ))}
+          {studio
+            ? STUDIO_NAV.map((item) =>
+                item.external ? (
+                  <a key={item.label} href={item.href} target="_blank" rel="noreferrer">
+                    {item.label}
+                  </a>
+                ) : (
+                  <a key={item.label} href={item.href}>
+                    {item.label}
+                  </a>
+                ),
+              )
+            : NAV.map(([r, label]) => (
+                <a key={r} href={href(r)} aria-current={route === r ? 'page' : undefined} className={route === r ? 'on' : ''}>
+                  {label}
+                </a>
+              ))}
         </nav>
         <div className="header-end">
-          <a className="npm" href={REPO} target="_blank" rel="noreferrer">
-            GitHub
-          </a>
-          {overlay && (
+          {studio ? (
+            <a className="bag" href={href('playground')} aria-label="Collection">
+              <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" strokeWidth="1.6">
+                <path d="M6 8h12l-1 12H7L6 8z" />
+                <path d="M9 8V7a3 3 0 0 1 6 0v1" />
+              </svg>
+            </a>
+          ) : (
+            <a className="npm" href={REPO} target="_blank" rel="noreferrer">
+              GitHub
+            </a>
+          )}
+          {overlay && !studio && (
             <button
               type="button"
               className="nav-toggle"
@@ -67,10 +102,10 @@ function Header({ route }: { route: Route }) {
               {playNavOpen ? '▴' : '☰'}
             </button>
           )}
-          <ThemeToggle theme={theme} onChange={setTheme} />
+          {!studio && <ThemeToggle theme={theme} onChange={setTheme} />}
         </div>
       </header>
-      {overlay && !playNavOpen && (
+      {overlay && !studio && !playNavOpen && (
         <button type="button" className="nav-fab" aria-label="Show navigation" onClick={() => setPlayNavOpen(true)}>
           ☰
         </button>

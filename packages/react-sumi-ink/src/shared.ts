@@ -14,6 +14,10 @@ export interface InkSplashOptions {
   color?: InkRgb;
   vx?: number;
   vy?: number;
+  pressure?: number;
+  load?: number;
+  speed?: number;
+  wash?: number;
 }
 
 export interface InkPoint {
@@ -26,23 +30,40 @@ export interface InkRuntimeError {
   message: string;
 }
 
+export interface InkGrid {
+  vw: number;
+  vh: number;
+  scale: number;
+}
+
 export const qualityToGrid = (
   quality: InkQuality,
   width: number,
   height: number,
   fps?: number,
-): { w: number; h: number } => {
-  const short = Math.min(width, height);
-  let scale = 0.35;
-  if (quality === 'low') scale = 0.22;
-  else if (quality === 'medium') scale = 0.3;
-  else if (quality === 'high') scale = 0.42;
-  else if (fps !== undefined && fps < 50) scale = Math.max(0.18, scale - 0.08);
-  const base = Math.max(64, Math.round(short * scale));
-  return {
-    w: Math.round((width / short) * base),
-    h: Math.round((height / short) * base),
-  };
+): InkGrid => {
+  const mobile = width < 760;
+  let vw = 160;
+  let scale = 4;
+  if (quality === 'low' || (quality === 'auto' && mobile)) {
+    vw = 96;
+    scale = 2;
+  } else if (quality === 'medium') {
+    vw = 128;
+    scale = 3;
+  } else if (quality === 'high') {
+    vw = 176;
+    scale = 4;
+  }
+  if (fps !== undefined && fps < 48) {
+    vw = Math.max(80, Math.round(vw * 0.75));
+    scale = Math.max(2, scale - 1);
+  }
+  const aspect = width / Math.max(1, height);
+  let vh = Math.round(vw / Math.max(0.42, Math.min(aspect, 2.4)));
+  vh = Math.max(36, Math.min(220, vh));
+  if (vw * vh * scale * scale > 300000) scale = Math.max(2, scale - 1);
+  return { vw, vh, scale };
 };
 
 export const supportsInkRuntime = (): { webgl2: boolean; wasm: boolean; worker: boolean } => {

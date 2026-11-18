@@ -1,9 +1,9 @@
-import { InkStage } from 'react-sumi-ink';
-import { useViewportStage } from '../lib/useViewportStage';
-import { Scene } from '../playground/Scene';
-import { Code, InstallPill } from './Code';
+import { useRef } from 'react';
+import { InkStage, type InkStageHandle } from 'react-sumi-ink';
+import { Code } from './Code';
 import { PresetDemo } from './PresetDemo';
 import { href } from './router';
+import { playStudioFlow } from './studioFlow';
 
 const FEATURES = [
   {
@@ -38,48 +38,65 @@ const FEATURES = [
   },
 ];
 
+function Seal() {
+  return (
+    <svg className="seal-svg" viewBox="0 0 64 64" width="42" height="42" aria-hidden>
+      <rect width="64" height="64" fill="#c23a2c" />
+      <rect x="3" y="3" width="58" height="58" fill="none" stroke="#f4efe6" strokeWidth="1.2" />
+      <rect x="6" y="6" width="52" height="52" fill="none" stroke="#f4efe6" strokeWidth="0.6" />
+      <g fill="none" stroke="#f4efe6" strokeWidth="1.15" strokeLinejoin="round">
+        <path d="M14 16h10M16 16v14M14 23h8M26 15c4 0 6 3 6 7s-2 7-6 7h-2V15z" />
+        <path d="M38 16h8v4c0 4-2 6-6 6h-2M40 26v8M46 28c3 2 4 5 2 8" />
+        <path d="M15 38h8v10H15zM18 38v10M27 38c5 0 7 3 7 6s-3 5-7 5h-3V38z" />
+        <path d="M40 37h9M42 37v12M40 43h7M49 38c3 1 4 4 3 7s-3 4-6 4" />
+      </g>
+    </svg>
+  );
+}
+
 export function Home() {
-  const { scale } = useViewportStage();
+  const stageRef = useRef<InkStageHandle>(null);
+  const played = useRef(false);
   return (
     <>
-      <section className="hero ink-hero">
-        <div className="hero-copy">
-          <span className="eyebrow">React · Rust WASM · WebGL2</span>
-          <h1>
-            Tinta sumi-e
-            <br />
-            ao redor do <em>DOM</em>.
-          </h1>
-          <p className="lead">
-            Pinte no papel washi. O fluido contorna titulos, botoes e cartoes marcados com data-ink, com presets prontos
-            para produto.
-          </p>
-          <div className="hero-actions">
-            <a className="btn primary" href={href('docs', 'quick-start')}>
-              Comecar
+      <section className="studio">
+        <InkStage
+          ref={stageRef}
+          className="studio-stage"
+          preset="sumi"
+          mode="paint"
+          onReady={(info) => {
+            if (played.current || !stageRef.current) return;
+            played.current = true;
+            const stage = stageRef.current;
+            playStudioFlow(stage, false);
+            const w = window as Window & {
+              __inkReplay?: (animate: boolean) => void;
+              __inkClear?: () => void;
+            };
+            w.__inkClear = () => stage.clear();
+            w.__inkReplay = (animate) => playStudioFlow(stage, animate);
+          }}
+        >
+          <div className="studio-ui">
+            <h1 className="studio-title" data-ink-glyphs data-ink="obstacle">
+              Ink that flows
+            </h1>
+            <a className="studio-cta" href={href('playground')} data-ink="obstacle">
+              Explore collection
+              <span aria-hidden> →</span>
             </a>
-            <a className="btn" href={href('playground')}>
-              Playground
-            </a>
+            <div className="studio-seal" data-ink="obstacle">
+              <Seal />
+            </div>
           </div>
-          <InstallPill />
-        </div>
-
-        <InkStage className="hero-stage" preset="sumi" mode="paint" style={{ minHeight: 460 }}>
-          <div className="hero-ink-content">
-            <h2 className="hero-serif" data-ink-glyphs data-ink="obstacle">
-              墨
-            </h2>
-            <p className="hero-cta" data-ink="obstacle">
-              Passe o mouse ou o dedo no papel
-            </p>
-            <a className="hero-cta-btn" href={href('playground')} data-ink="repel">
-              Abrir demo
-            </a>
+          <div className="studio-corners">
+            <span data-ink-glyphs data-ink="obstacle">
+              Handcrafted in Japan
+            </span>
+            <span className="studio-scroll">Scroll to discover ↓</span>
           </div>
-          <Scene heading={false} layoutScale={scale} />
         </InkStage>
-        <p className="hero-hint">Pinte no playground. Troque sumi, koi e smoke no painel.</p>
       </section>
 
       <section className="band">
