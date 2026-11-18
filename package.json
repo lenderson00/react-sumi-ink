@@ -1,0 +1,38 @@
+{
+  "name": "react-sumi-ink-site",
+  "private": true,
+  "version": "0.1.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "npm run build:lib && npm run build:site",
+    "build:lib": "npm run build -w react-sumi-ink",
+    "build:site": "tsc -b && vite build",
+    "build:wasm": "npm run build:wasm -w react-sumi-ink",
+    "preview": "vite preview",
+    "typecheck": "tsc -b && npm run typecheck -w react-sumi-ink",
+    "test:rust": "cargo test --manifest-path crates/sumi-ink-sim/Cargo.toml",
+    "clippy": "cargo clippy --manifest-path crates/sumi-ink-sim/Cargo.toml -- -D warnings"
+  },
+  "dependencies": {
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "react-sumi-ink": "*"
+  },
+  "devDependencies": {
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "@vitejs/plugin-react": "^4.3.4",
+    "playwright": "^1.65.1",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.3"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lenderson00/react-sumi-ink.git"
+  }
+}

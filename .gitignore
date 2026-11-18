@@ -1,0 +1,11 @@
+node_modules
+dist
+target
+crates/**/target
+*.tsbuildinfo
+*.log
+.DS_Store
+.vite
+.claude
+.env
+.env.*

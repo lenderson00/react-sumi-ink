@@ -1,0 +1,61 @@
+{
+  "name": "react-sumi-ink",
+  "version": "0.1.0",
+  "description": "DOM-aware sumi-e ink fluid simulation for React (Rust WASM + WebGL2).",
+  "keywords": [
+    "react",
+    "ink",
+    "sumi-e",
+    "fluid",
+    "webgl",
+    "wasm",
+    "typescript"
+  ],
+  "license": "MIT",
+  "author": {
+    "name": "Lenderson Macedo",
+    "url": "https://github.com/lenderson00"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/lenderson00/react-sumi-ink.git",
+    "directory": "packages/react-sumi-ink"
+  },
+  "homepage": "https://lenderson00.github.io/react-sumi-ink/",
+  "bugs": {
+    "url": "https://github.com/lenderson00/react-sumi-ink/issues"
+  },
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.cjs",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "require": "./dist/index.cjs"
+    },
+    "./wasm/sumi_ink_sim_bg.wasm": "./wasm/pkg/sumi_ink_sim_bg.wasm",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist",
+    "wasm/pkg",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "build:wasm": "wasm-pack build ../../crates/sumi-ink-sim --target web --out-dir wasm/pkg",
+    "build": "npm run build:wasm && vite build && tsc -p tsconfig.build.json",
+    "typecheck": "tsc -p tsconfig.build.json --noEmit",
+    "prepublishOnly": "npm run build"
+  },
+  "peerDependencies": {
+    "react": ">=18",
+    "react-dom": ">=18"
+  },
+  "dependencies": {
+    "sumi-ink-sim": "file:./wasm/pkg"
+  }
+}
